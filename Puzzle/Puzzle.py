@@ -35,11 +35,9 @@ class Puzzle:
     """
 
     def log(self, *args):
-        """Helper to log informations to the GUI"""
-
         print(" ".join(map(str, args)))
         if self.viewer:
-            self.viewer.addLog(args)
+            self.viewer.addLog(args)   # goes to ViewerProxy.addLog
 
     def __init__(self, path, viewer=None, green_screen=False):
         """Extract information of pieces in the img at `path` and start computation of the solution"""

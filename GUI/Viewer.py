@@ -1,4 +1,5 @@
-from PyQt5.QtCore import QDir
+from PyQt5.QtCore import QDir, QThread, Qt
+import threading
 from PyQt5.QtGui import QImage, QPalette, QPixmap
 from PyQt5.QtWidgets import (
     QAction,
@@ -142,20 +143,27 @@ class Viewer(QMainWindow):
         """
         Callback to start resolution
         """
+        print("Starting Solver Thread...")
         self.solveAct.setEnabled(False)
         self.solveGreenAct.setEnabled(False)
 
         self.solveMenu = QMenu("&Zolver is running", self)
         self.menuBar().addMenu(self.solveMenu)
 
-        self.thread = SolveThread(self.imgs[0], self)
-        self.thread.finished.connect(self.endSolve)
+        self.thread = SolveThread(self.imgs[0], self, green_screen=False)
+
+        # FORCE queued connections so slots run in GUI thread
+        self.thread.logAdded.connect(self.addLog, Qt.QueuedConnection)
+        self.thread.imageAdded.connect(self.addImage, Qt.QueuedConnection)
+        self.thread.finished.connect(self.endSolve, Qt.QueuedConnection)
+
         self.thread.start()
 
     def solveGreen(self):
         """
         Callback to start resolution using green background preprocessing
         """
+        print("Starting Solver Thread (green background)...")
         self.solveAct.setEnabled(False)
         self.solveGreenAct.setEnabled(False)
 
@@ -163,7 +171,11 @@ class Viewer(QMainWindow):
         self.menuBar().addMenu(self.solveMenu)
 
         self.thread = SolveThread(self.imgs[0], self, green_screen=True)
-        self.thread.finished.connect(self.endSolve)
+
+        self.thread.logAdded.connect(self.addLog, Qt.QueuedConnection)
+        self.thread.imageAdded.connect(self.addImage, Qt.QueuedConnection)
+        self.thread.finished.connect(self.endSolve, Qt.QueuedConnection)
+
         self.thread.start()
 
     def endSolve(self):
