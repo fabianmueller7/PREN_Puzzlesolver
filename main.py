@@ -6,7 +6,6 @@ Aufgaben:
   die Umgebungsvariable ZOLVER_TEMP_DIR für das Programm verfügbar.
 - Sorgt dafür, dass dieses Verzeichnis beim Beenden automatisch gelöscht wird.
 - Startet die PyQt5-Anwendung und zeigt das Hauptfenster (Viewer) an.
-Moin
 """
 
 
