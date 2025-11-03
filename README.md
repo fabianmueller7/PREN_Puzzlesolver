@@ -74,6 +74,7 @@ SCIA 2018 - EPITA
 * Denis Castéran
 * Jérémy Lugand
 * Hugo Rybinski
+* Fabian Müller
 
 ![Screenshot](resources/jigsaw-solved/craies_32.png)
 ![Screenshot](resources/jigsaw-solved/link.png)
