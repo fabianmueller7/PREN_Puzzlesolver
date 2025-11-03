@@ -259,54 +259,93 @@ def get_colors(edge):
 
 def real_edge_compute(e1, e2):
     """
-    Return the distance between colors of two edges for real puzzle.
-
-    :param e1: Edge object
-    :param e2: Edge object
-    :return: distance Float
+    Geometry-only distance between two edges (for 'real' puzzle).
+    Uses only shape, ignores colors completely.
     """
 
+    # Optional quick check: reject edges whose lengths differ too much
     if not have_edges_similar_length(
-        e1.shape[0], e1.shape[-1], e2.shape[0], e2.shape[-1], 0.20
+            e1.shape[0], e1.shape[-1], e2.shape[0], e2.shape[-1], 0.20
     ):
         return float("inf")
 
-    e1_lab_colors = get_colors(e1)
-    e2_lab_colors = get_colors(e2)
-    return min(
-        euclidean_distance(e1_lab_colors, e2_lab_colors),
-        euclidean_distance(e1_lab_colors, e2_lab_colors[::-1]),
-    )
+    return _edge_geom_distance(e1, e2)
+
 
 def generated_edge_compute(e1, e2):
-    # edge size
-    shapevalue, distvalue = dist_edge(
-        e1.shape[0], e1.shape[-1], e2.shape[0], e2.shape[-1]
-    )
+    """
+    Geometry-only distance between two edges (for generated puzzles).
+    Same logic as real_edge_compute so behaviour is consistent.
+    """
 
-    # --- Formvergleich inkl. Winkel ---
-    # WICHTIG: diff_match_edges2 muss (score, angle) zurückgeben!
-    edge_shape_score, best_angle = diff_match_edges2(
-        np.array(e1.shape), np.array(e2.shape)
-    )
+    if not have_edges_similar_length(
+            e1.shape[0], e1.shape[-1], e2.shape[0], e2.shape[-1], 0.20
+    ):
+        return float("inf")
 
-    try:
-        e2.rotation_angle = best_angle
-    except Exception:
-        pass
+    return _edge_geom_distance(e1, e2)
 
-    # Sigmoid
-    K = -1.05
-    edge_shape_score = (K * edge_shape_score) / (K - edge_shape_score + 1)
+def _resample_curve(points, n_points=100):
+    """
+    Resample a sequence of 2D points to exactly n_points along its arc length.
+    points: (N, 2) array-like
+    """
+    pts = np.asarray(points, dtype=np.float32)
+    if len(pts) < 2:
+        return np.repeat(pts[:1], n_points, axis=0)
 
-    # colors
-    e1_lab_colors = get_colors(e1)
-    e2_lab_colors = get_colors(e2)
-    val = min(
-        euclidean_distance(e1_lab_colors, e2_lab_colors),
-        euclidean_distance(e1_lab_colors, e2_lab_colors[::-1]),
-    )
-    return val * (1.0 + math.sqrt(shapevalue) * 0.3) * (1.0 + edge_shape_score * 0.001)
+    # cumulative arc length
+    deltas = np.diff(pts, axis=0)
+    seg_len = np.linalg.norm(deltas, axis=1)
+    s = np.concatenate([[0], np.cumsum(seg_len)])
+    total = s[-1]
+    if total == 0:
+        return np.repeat(pts[:1], n_points, axis=0)
+
+    # target positions along the curve
+    t = np.linspace(0, total, n_points)
+
+    resampled = []
+    j = 0
+    for tt in t:
+        while j + 1 < len(s) and s[j + 1] < tt:
+            j += 1
+        if j + 1 >= len(pts):
+            resampled.append(pts[-1])
+        else:
+            ratio = (tt - s[j]) / (s[j + 1] - s[j] + 1e-8)
+            resampled.append(pts[j] + ratio * (pts[j + 1] - pts[j]))
+    return np.asarray(resampled, dtype=np.float32)
+
+
+def _edge_geom_distance(e1, e2, n_points=100):
+    """
+    Purely geometric distance between two Edge objects.
+    Uses only edge.shape, ignores any color.
+
+    Returns a single float: smaller = more similar.
+    """
+    pts1 = np.asarray(e1.shape, dtype=np.float32)
+    pts2 = np.asarray(e2.shape, dtype=np.float32)
+
+    if len(pts1) < 2 or len(pts2) < 2:
+        return float("inf")
+
+    # Make shapes translation-invariant
+    pts1 = pts1 - pts1.mean(axis=0, keepdims=True)
+    pts2 = pts2 - pts2.mean(axis=0, keepdims=True)
+
+    # Resample both curves to same length
+    c1 = _resample_curve(pts1, n_points=n_points)
+    c2 = _resample_curve(pts2, n_points=n_points)
+
+    # Direct direction
+    d1 = np.linalg.norm(c1 - c2, axis=1).mean()
+
+    # Flipped direction (reverse one edge)
+    d2 = np.linalg.norm(c1 - c2[::-1], axis=1).mean()
+
+    return min(d1, d2)
 
 
 

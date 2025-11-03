@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 import os
 
 from Img.GreenScreen import remove_background
-from Img.filters import export_contours
+from Img.filters import export_contours, export_contours_without_colormatching
 
 PREPROCESS_DEBUG_MODE = 0
 
@@ -178,7 +178,7 @@ class Extractor:
         # while True: # TODO Add this at the end of the project, it is a fallback tactic
 
         self.log(">>> START contour/corner detection")
-        puzzle_pieces = export_contours(
+        puzzle_pieces = export_contours_without_colormatching(
             self.img,
             self.img_bw,
             contours,

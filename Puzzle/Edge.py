@@ -13,7 +13,7 @@ class Edge:
     def __init__(
         self,
         shape,
-        color,
+        color=None,
         edge_type=TypeEdge.HOLE,
         connected=False,
         direction=Directions.N,
