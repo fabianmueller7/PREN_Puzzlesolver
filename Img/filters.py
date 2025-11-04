@@ -650,7 +650,6 @@ def export_contours_without_colormatching(
         img_piece = np.zeros_like(img)
         img_piece[mask_full == 255] = img[mask_full == 255]
 
-        # ❗ Wichtig: gleiche (x, y)-Konvention wie vorher beibehalten
         xs, ys = np.where(mask_full == 255)
         pixels = {(x, y): img_piece[x, y] for x, y in zip(xs, ys)}
 

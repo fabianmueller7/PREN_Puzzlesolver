@@ -90,31 +90,57 @@ class Extractor:
             #self.img_bw = cv2.morphologyEx(self.img_bw, cv2.MORPH_OPEN, kernel)
 
         def generated_preprocesing():
-            """Verbesserte Vorverarbeitung für reale Puzzlebilder"""
-            # In Graustufen umwandeln (falls noch nicht)
+            """Robust preprocessing for real puzzle images with crack-free contours."""
+
+            import cv2, numpy as np, os
+
+            # Grayscale conversion
             gray = cv2.cvtColor(self.img, cv2.COLOR_BGR2GRAY)
 
-            # Sanft glätten, um Schatten und Reflexe zu minimieren
-            blur = cv2.GaussianBlur(gray, (7, 7), 0)
+            # Illumination normalization (removes uneven lighting)
+            blur_bg = cv2.GaussianBlur(gray, (55, 55), 0)
+            norm = cv2.addWeighted(gray, 1.5, blur_bg, -0.5, 0)
+            norm = cv2.normalize(norm, None, 0, 255, cv2.NORM_MINMAX)
 
-            # Lokales (adaptives) Thresholding – funktioniert auch bei ungleichmässiger Beleuchtung
+            # Gentle contrast boost
+            clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+            gray_eq = clahe.apply(norm.astype(np.uint8))
+
+            # Adaptive threshold with slightly smaller block size
             self.img_bw = cv2.adaptiveThreshold(
-                blur, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-                cv2.THRESH_BINARY_INV, 35, 5
+                gray_eq,
+                255,
+                cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                cv2.THRESH_BINARY_INV,
+                31,
+                4
             )
 
-            # Kanten hervorheben und kombinieren
-            edges = cv2.Canny(blur, 20, 80)
+            # Add edge reinforcement
+            edges = cv2.Canny(gray_eq, 30, 90)
             self.img_bw = cv2.bitwise_or(self.img_bw, edges)
 
-            # Kleine Löcher schliessen und Kanten glätten
-            kernel2 = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-            self.img_bw = cv2.morphologyEx(self.img_bw, cv2.MORPH_CLOSE, kernel2, iterations=2)
-            self.img_bw = cv2.morphologyEx(self.img_bw, cv2.MORPH_OPEN, kernel2, iterations=2)
+            # Close cracks & fill gaps
+            kernel_close = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
+            self.img_bw = cv2.morphologyEx(self.img_bw, cv2.MORPH_CLOSE, kernel_close, iterations=3)
 
-            # Debug-Ausgabe speichern (optional)
-            cv2.imwrite(os.path.join(os.environ["ZOLVER_TEMP_DIR"], "adaptive_threshold.png"), self.img_bw)
+            # Fill internal holes completely
+            contours, _ = cv2.findContours(self.img_bw, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE)
+            for cnt in contours:
+                cv2.drawContours(self.img_bw, [cnt], 0, 255, -1)
 
+            # Smooth & denoise
+            kernel_open = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+            self.img_bw = cv2.morphologyEx(self.img_bw, cv2.MORPH_OPEN, kernel_open, iterations=1)
+            self.img_bw = cv2.GaussianBlur(self.img_bw, (3, 3), 0)
+
+            # Optional: final threshold to clean up blur residues
+            _, self.img_bw = cv2.threshold(self.img_bw, 127, 255, cv2.THRESH_BINARY)
+
+            # Save intermediate debug images (optional)
+            cv2.imwrite(os.path.join(os.environ["ZOLVER_TEMP_DIR"], "pre_gray_eq.png"), gray_eq)
+            cv2.imwrite(os.path.join(os.environ["ZOLVER_TEMP_DIR"], "pre_norm.png"), norm)
+            cv2.imwrite(os.path.join(os.environ["ZOLVER_TEMP_DIR"], "adaptive_fixed.png"), self.img_bw)
 
         def real_preprocessing():
             """Apply morphological operations on base image."""
@@ -126,15 +152,17 @@ class Extractor:
         # With this we apply morphologic operations (CLOSE, OPEN and GRADIENT)
         if not self.green_:
             generated_preprocesing()
+            self.separate_pieces()
         else:
             real_preprocessing()
+            self.separate_pieces()
         # These prints are activated only if the PREPROCESS_DEBUG_MODE variable at the top is set to 1
         if PREPROCESS_DEBUG_MODE == 1:
             show_image(self.img_bw)
 
         # With this we fill the holes in every contours, to make sure there is no fragments inside the pieces
-        if not self.green_:
-            fill_holes()
+        #if not self.green_:
+        #    fill_holes()
 
         if PREPROCESS_DEBUG_MODE == 1:
             show_image(self.img_bw)
@@ -192,3 +220,135 @@ class Extractor:
             return None
         return puzzle_pieces
 
+    def separate_pieces(self):
+        import cv2, numpy as np, os
+        print(">>> separate_pieces CALLED")
+
+        FG_THRESH  = 0.6
+        DILATE_ITER = 1
+        CLOSE_ITER  = 0
+        OPEN_ITER   = 1
+        BLUR_RADIUS = 1
+        DIST_SMOOTH = 3
+        POST_CLOSE  = 0
+        POST_OPEN   = 1
+        GAP_ERODE_ITER = 2
+
+        bw = self.img_bw.copy()
+        if len(bw.shape) > 2:
+            bw = cv2.cvtColor(bw, cv2.COLOR_BGR2GRAY)
+        _, bw = cv2.threshold(bw, 127, 255, cv2.THRESH_BINARY)
+
+        # 🔴 Save original silhouette so we can restore real shape later
+        orig_bw = bw.copy()
+
+        # 🔴 ENLARGE GAPS: small erosion makes narrow black gaps bigger,
+        #    so watershed cannot accidentally connect neighboring pieces.
+
+        gap_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+        bw = cv2.erode(bw, gap_kernel, iterations=GAP_ERODE_ITER)
+
+        kernel_base = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+        bw = cv2.morphologyEx(bw, cv2.MORPH_CLOSE, kernel_base, iterations=CLOSE_ITER)
+        bw = cv2.morphologyEx(bw, cv2.MORPH_OPEN,  kernel_base, iterations=OPEN_ITER)
+        bw = cv2.GaussianBlur(bw, (BLUR_RADIUS, BLUR_RADIUS), 0)
+
+        # === distance transform ===
+        dist = cv2.distanceTransform(bw, cv2.DIST_L2, 5)
+        dist = cv2.GaussianBlur(dist, (DIST_SMOOTH, DIST_SMOOTH), 0)
+        dist_norm = cv2.normalize(dist, None, 0, 1.0, cv2.NORM_MINMAX)
+
+        _, sure_fg = cv2.threshold(dist_norm, FG_THRESH, 1.0, cv2.THRESH_BINARY)
+        sure_fg = (sure_fg * 255).astype(np.uint8)
+
+        kernel_bg = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+        sure_bg = cv2.dilate(bw, kernel_bg, iterations=DILATE_ITER)
+        unknown = cv2.subtract(sure_bg, sure_fg)
+
+        _, markers = cv2.connectedComponents(sure_fg)
+        markers = markers + 1
+        markers[unknown == 255] = 0
+
+        img_color = cv2.cvtColor(bw, cv2.COLOR_GRAY2BGR)
+        markers = cv2.watershed(img_color, markers)
+
+        separated = np.zeros_like(bw)
+        separated[markers > 1] = 255
+
+        # 🔴 Clip back to the ORIGINAL mask, not the eroded one
+        #    -> shapes stay close to original, but separation comes from the erosion.
+        separated = cv2.bitwise_and(separated, orig_bw)
+
+        # (optional) tiny clean-up, you already had POST_OPEN etc:
+        kernel_final = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2, 2))
+        separated = cv2.morphologyEx(separated, cv2.MORPH_OPEN, kernel_final,
+                                     iterations=POST_OPEN)
+
+        # debug images etc. unchanged ...
+        out_dir = os.environ["ZOLVER_TEMP_DIR"]
+        debug = np.zeros_like(img_color)
+        for label in np.unique(markers):
+            if label <= 1:
+                continue
+            mask = np.uint8(markers == label) * 255
+            color = tuple(np.random.randint(0, 255, 3).tolist())
+            debug[mask == 255] = color
+
+        cv2.imwrite(os.path.join(out_dir, "watershed_param.png"), separated)
+        cv2.imwrite(os.path.join(out_dir, "watershed_param_debug.png"), debug)
+
+        self.img_bw = separated
+
+
+        # 2) Remove thin “spurs” and small blobs
+        def remove_spurs(binary):
+            """
+            Removes small protrusions and noise attached via thin connections.
+            """
+            # a) Cut off 1px-thick connections
+            spur_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+            pruned = cv2.morphologyEx(binary, cv2.MORPH_OPEN, spur_kernel, iterations=1)
+
+            # b) Remove tiny islands that got detached
+            num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(
+                pruned, connectivity=8
+            )
+
+            # stats[:, cv2.CC_STAT_AREA] -> area per label
+            areas = stats[1:, cv2.CC_STAT_AREA]  # ignore background label 0
+            if len(areas) == 0:
+                return pruned
+
+            max_area = areas.max()
+            # everything smaller than X% of the biggest component is treated as junk
+            MIN_REL_AREA = 0.02  # 2% – tweak if needed
+            min_keep_area = int(MIN_REL_AREA * max_area)
+
+            cleaned = np.zeros_like(pruned)
+            for label in range(1, num_labels):
+                if stats[label, cv2.CC_STAT_AREA] >= min_keep_area:
+                    cleaned[labels == label] = 255
+
+            return cleaned
+
+        separated = remove_spurs(separated)
+
+        # 3) Optional very light smoothing / denoising
+        kernel_final = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2, 2))
+        separated = cv2.morphologyEx(separated, cv2.MORPH_OPEN, kernel_final,
+                                     iterations=POST_OPEN)
+
+        # === DEBUG VISUALIZATION ===
+        debug = np.zeros_like(img_color)
+        for label in np.unique(markers):
+            if label <= 1:
+                continue
+            mask = np.uint8(markers == label) * 255
+            color = tuple(np.random.randint(0, 255, 3).tolist())
+            debug[mask == 255] = color
+
+        out_dir = os.environ["ZOLVER_TEMP_DIR"]
+        cv2.imwrite(os.path.join(out_dir, "watershed_param.png"), separated)
+        cv2.imwrite(os.path.join(out_dir, "watershed_param_debug.png"), debug)
+
+        self.img_bw = separated
