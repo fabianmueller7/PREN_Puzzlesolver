@@ -1,0 +1,26 @@
+[
+  {
+    "id": 1,
+    "x_target_mm": 52.5,
+    "y_target_mm": 37.0,
+    "theta_target_deg": 0.0
+  },
+  {
+    "id": 2,
+    "x_target_mm": 157.5,
+    "y_target_mm": 37.0,
+    "theta_target_deg": 0.0
+  },
+  {
+    "id": 3,
+    "x_target_mm": 52.5,
+    "y_target_mm": 111.0,
+    "theta_target_deg": 0.0
+  },
+  {
+    "id": 4,
+    "x_target_mm": 157.5,
+    "y_target_mm": 111.0,
+    "theta_target_deg": 0.0
+  }
+]
