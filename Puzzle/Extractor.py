@@ -199,31 +199,46 @@ class Extractor:
     # ------------------------------------------------------------------
 
     def simple_piece_threshold(self, min_pieces=2, max_pieces=200):
+        eps_mulitplicator = 0.0001 # Value from 0.0000.. to 0.15 ; Defines how round the borders can be (higher is more straight)
+
         gray = cv2.cvtColor(self.img, cv2.COLOR_BGR2GRAY)
-        gray = cv2.GaussianBlur(gray, (5, 5), 0)
 
-        # Otsu + invert
-        _, bw = cv2.threshold(
-            gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU
-        )
+        # --- 1. Reflection suppression ---
+        gray = cv2.medianBlur(gray, 5)
+        gray = cv2.bilateralFilter(gray, d=9, sigmaColor=75, sigmaSpace=75)
 
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
-        bw = cv2.morphologyEx(bw, cv2.MORPH_CLOSE, kernel, iterations=1)
-        bw = cv2.morphologyEx(bw, cv2.MORPH_OPEN,  kernel, iterations=1)
+        # Clip top highlights
+        high = np.percentile(gray, 98)
+        gray = np.clip(gray, 0, high).astype(np.uint8)
+
+        # Optional gamma compression (further reduces bright glare)
+        gray = np.power(gray / 255.0, 0.8)
+        gray = (gray * 255).astype(np.uint8)
+
+        # --- 2. Threshold ---
+        _, bw = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+
+        # --- 3. Morphological smoothing ---
+        kernel_close = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
+        kernel_open = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+
+        bw = cv2.morphologyEx(bw, cv2.MORPH_CLOSE, kernel_close, iterations=2)
+        bw = cv2.morphologyEx(bw, cv2.MORPH_OPEN, kernel_open, iterations=1)
+
+        # Optional: Gaussian blur + rethreshold to smooth jaggies
+        bw = cv2.GaussianBlur(bw, (5, 5), 0)
+        _, bw = cv2.threshold(bw, 128, 255, cv2.THRESH_BINARY)
 
         self._save_temp("simple_bw_raw.png", bw)
 
-        # Konturen suchen (nur äußere!)
-        contours, _ = cv2.findContours(
-            bw, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
-        )
+        # --- 4. Contours ---
+        contours, _ = cv2.findContours(bw, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         if not contours:
             return False
 
-        # Nach Fläche sortieren
         contours = sorted(contours, key=cv2.contourArea, reverse=True)
         max_area = cv2.contourArea(contours[0])
-        area_thr = max_area * 0.05  # 5 % der größten Kontur
+        area_thr = max_area * 0.05
         good_contours = [c for c in contours if cv2.contourArea(c) > area_thr]
 
         n = len(good_contours)
@@ -232,12 +247,28 @@ class Extractor:
         if not (min_pieces <= n <= max_pieces):
             return False
 
-        # ⬇️ WICHTIG: jedes Teil komplett ausfüllen
+        # --- 5. Fill + contour smoothing ---
         filled = np.zeros_like(bw)
         cv2.drawContours(filled, good_contours, -1, 255, thickness=cv2.FILLED)
 
-        self._save_temp("simple_bw_filled.png", filled)
-        self.img_bw = filled
+        # Light blur + rethreshold to smooth inside edges
+        filled = cv2.GaussianBlur(filled, (5, 5), 0)
+        _, filled = cv2.threshold(filled, 128, 255, cv2.THRESH_BINARY)
+
+        # --- 6. Geometric smoothing of contours ---
+        smooth_contours = []
+        for c in good_contours:
+            # Increase eps for smoother outline
+            eps = eps_mulitplicator * cv2.arcLength(c, True)
+            smooth = cv2.approxPolyDP(c, eps, True)
+            smooth_contours.append(smooth)
+        good_contours = smooth_contours
+
+        # Redraw final mask from smoothed contours
+        self.img_bw = np.zeros_like(bw)
+        cv2.drawContours(self.img_bw, good_contours, -1, 255, thickness=cv2.FILLED)
+
+        self._save_temp("simple_bw_filled.png", self.img_bw)
         return True
 
 
@@ -257,56 +288,3 @@ class Extractor:
         max_area = max(areas)
         thr = max_area * min_ratio
         return [c for c, a in zip(contours, areas) if a >= thr]
-
-    def _shadow_reflection_resistant_segmentation(self, bgr):
-        """
-        Heavy-duty segmentation robust to reflections and shadows.
-        Works in LAB + HSV color spaces, removes specular highlights,
-        equalizes illumination, then thresholds adaptively.
-        """
-        img = bgr.copy()
-        img = cv2.medianBlur(img, 5)
-
-        # --- 1️⃣  Specular highlight mask -----------------------------------
-        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        # pixels above 92% brightness are reflections
-        _, highlights = cv2.threshold(gray, int(0.92 * gray.max()), 255, cv2.THRESH_BINARY)
-        highlights = cv2.dilate(highlights, np.ones((5,5), np.uint8), iterations=2)
-
-        # --- 2️⃣  Color normalize (gray-world) ------------------------------
-        lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
-        l, a, b = cv2.split(lab)
-        l = cv2.equalizeHist(l)
-        lab = cv2.merge((l, a, b))
-        img_norm = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
-
-        # --- 3️⃣  HSV lightness normalization -------------------------------
-        hsv = cv2.cvtColor(img_norm, cv2.COLOR_BGR2HSV)
-        h, s, v = cv2.split(hsv)
-        v = cv2.equalizeHist(v)
-        hsv = cv2.merge((h, s, v))
-        img_eq = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
-
-        # --- 4️⃣  Convert to gray, suppress highlights ----------------------
-        gray = cv2.cvtColor(img_eq, cv2.COLOR_BGR2GRAY)
-        gray = cv2.inpaint(gray, highlights, 5, cv2.INPAINT_TELEA)
-
-        # --- 5️⃣  Adaptive + Otsu combo ------------------------------------
-        blur = cv2.GaussianBlur(gray, (5, 5), 0)
-        _, otsu = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-        adapt = cv2.adaptiveThreshold(
-            blur, 255,
-            cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV,
-            blockSize=45, C=2
-        )
-        bw = cv2.bitwise_or(otsu, adapt)
-
-        # --- 6️⃣  Morphological repairs ------------------------------------
-        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5,5))
-        bw = cv2.morphologyEx(bw, cv2.MORPH_CLOSE, kernel, iterations=3)
-        bw = cv2.morphologyEx(bw, cv2.MORPH_OPEN,  kernel, iterations=2)
-
-        if PREPROCESS_DEBUG_MODE:
-            self._save_temp("reflection_shadow_fixed_bw.png", bw)
-
-        return bw
