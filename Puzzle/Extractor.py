@@ -80,20 +80,13 @@ class Extractor:
         backup_bw = None
 
         if not self.green_:
-            # 1) simple fast-path for high-contrast images
-            used_simple = self.simple_piece_threshold(min_pieces=2, max_pieces=200)
-            if used_simple:
-                self.log("Using simple threshold segmentation (no watershed).")
-            else:
-                self.log("Simple threshold not suitable, switching to advanced preprocessing.")
-                self._advanced_preprocessing()
-                backup_bw = self.img_bw.copy()
-                self.separate_pieces()
+            used_simple = self.simple_piece_threshold(min_pieces=2, max_pieces=10)
+            self.log("Using simple threshold segmentation (no watershed).")
+
         else:
             # green-screen: we already have a fairly clean mask, just clean & separate
             self._basic_morphology()
             backup_bw = self.img_bw.copy()
-            self.separate_pieces()
 
         if PREPROCESS_DEBUG_MODE:
             show_image(self.img_bw, "final_bw_before_fallback")
@@ -173,61 +166,6 @@ class Extractor:
     # Preprocessing strategies
     # ------------------------------------------------------------------
 
-    def _advanced_preprocessing(self):
-        """
-        Robust preprocessing for real puzzle images:
-          - illumination normalization
-          - CLAHE contrast
-          - adaptive threshold
-          - crack-closing morphology
-        Sets self.img_bw (binary mask).
-        """
-        gray = cv2.cvtColor(self.img, cv2.COLOR_BGR2GRAY)
-
-        # illumination normalization
-        blur_bg = cv2.GaussianBlur(gray, (55, 55), 0)
-        norm = cv2.addWeighted(gray, 1.5, blur_bg, -0.5, 0)
-        norm = cv2.normalize(norm, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
-
-        # local contrast
-        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-        gray_eq = clahe.apply(norm)
-
-        # adaptive threshold
-        bw = cv2.adaptiveThreshold(
-            gray_eq,
-            255,
-            cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-            cv2.THRESH_BINARY_INV,
-            31,
-            4,
-        )
-
-        # reinforce edges
-        edges = cv2.Canny(gray_eq, 30, 90)
-        bw = cv2.bitwise_or(bw, edges)
-
-        # close cracks
-        kernel_close = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
-        bw = cv2.morphologyEx(bw, cv2.MORPH_CLOSE, kernel_close, iterations=3)
-
-        # fill internal holes
-        contours, _ = cv2.findContours(bw, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE)
-        for cnt in contours:
-            cv2.drawContours(bw, [cnt], 0, 255, -1)
-
-        # light smooth + clean
-        kernel_open = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-        bw = cv2.morphologyEx(bw, cv2.MORPH_OPEN, kernel_open, iterations=1)
-        bw = cv2.GaussianBlur(bw, (3, 3), 0)
-        _, bw = cv2.threshold(bw, 127, 255, cv2.THRESH_BINARY)
-
-        self.img_bw = bw
-
-        if PREPROCESS_DEBUG_MODE:
-            self._save_temp("pre_gray_eq.png", gray_eq)
-            self._save_temp("adaptive_fixed.png", bw)
-
     def _basic_morphology(self):
         """
         Simple open/close on current self.img_bw.
@@ -255,109 +193,6 @@ class Extractor:
             self._save_temp("fallback_bw.png", bw)
 
         return bw
-
-    # ------------------------------------------------------------------
-    # Watershed separation
-    # ------------------------------------------------------------------
-
-    def separate_pieces(self):
-        """
-        Watershed-based separation of touching pieces.
-        Works on self.img_bw and updates it in-place.
-        """
-        self.log(">>> separate_pieces CALLED")
-
-        FG_THRESH = 0.6
-        DILATE_ITER = 1
-        GAP_ERODE_ITER = 2
-        DIST_SMOOTH = 3
-
-        bw = self.img_bw.copy()
-        if len(bw.shape) > 2:
-            bw = cv2.cvtColor(bw, cv2.COLOR_BGR2GRAY)
-        _, bw = cv2.threshold(bw, 127, 255, cv2.THRESH_BINARY)
-
-        orig_bw = bw.copy()
-
-        # enlarge gaps between pieces
-        gap_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-        bw = cv2.erode(bw, gap_kernel, iterations=GAP_ERODE_ITER)
-
-        kernel_base = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-        bw = cv2.morphologyEx(bw, cv2.MORPH_CLOSE, kernel_base, iterations=0)
-        bw = cv2.morphologyEx(bw, cv2.MORPH_OPEN, kernel_base, iterations=1)
-        bw = cv2.GaussianBlur(bw, (1, 1), 0)
-
-        # distance transform
-        dist = cv2.distanceTransform(bw, cv2.DIST_L2, 5)
-        dist = cv2.GaussianBlur(dist, (DIST_SMOOTH, DIST_SMOOTH), 0)
-        dist_norm = cv2.normalize(dist, None, 0, 1.0, cv2.NORM_MINMAX)
-
-        _, sure_fg = cv2.threshold(dist_norm, FG_THRESH, 1.0, cv2.THRESH_BINARY)
-        sure_fg = (sure_fg * 255).astype(np.uint8)
-
-        kernel_bg = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
-        sure_bg = cv2.dilate(bw, kernel_bg, iterations=DILATE_ITER)
-        unknown = cv2.subtract(sure_bg, sure_fg)
-
-        _, markers = cv2.connectedComponents(sure_fg)
-        markers = markers + 1
-        markers[unknown == 255] = 0
-
-        img_color = cv2.cvtColor(bw, cv2.COLOR_GRAY2BGR)
-        markers = cv2.watershed(img_color, markers)
-
-        separated = np.zeros_like(bw)
-        separated[markers > 1] = 255
-
-        # restore original shape while preserving separation
-        separated = cv2.bitwise_and(separated, orig_bw)
-
-        # remove thin spurs + small blobs
-        separated = self._remove_spurs_and_small(separated)
-
-        self.img_bw = separated
-
-        # debug visualization
-        if PREPROCESS_DEBUG_MODE:
-            debug = np.zeros_like(img_color)
-            for label in np.unique(markers):
-                if label <= 1:
-                    continue
-                mask = np.uint8(markers == label) * 255
-                color = tuple(np.random.randint(0, 255, 3).tolist())
-                debug[mask == 255] = color
-
-            self._save_temp("watershed_param.png", separated)
-            self._save_temp("watershed_param_debug.png", debug)
-
-    def _remove_spurs_and_small(self, binary):
-        """
-        Removes small protrusions and small components (relative to the largest).
-        """
-        spur_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-        pruned = cv2.morphologyEx(binary, cv2.MORPH_OPEN, spur_kernel, iterations=1)
-
-        num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(
-            pruned, connectivity=8
-        )
-        if num_labels <= 1:
-            return pruned
-
-        areas = stats[1:, cv2.CC_STAT_AREA]
-        max_area = areas.max()
-        MIN_REL_AREA = 0.02
-        min_keep_area = int(MIN_REL_AREA * max_area)
-
-        cleaned = np.zeros_like(pruned)
-        for label in range(1, num_labels):
-            if stats[label, cv2.CC_STAT_AREA] >= min_keep_area:
-                cleaned[labels == label] = 255
-
-        # light smoothing
-        kernel_final = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2, 2))
-        cleaned = cv2.morphologyEx(cleaned, cv2.MORPH_OPEN, kernel_final, iterations=1)
-        return cleaned
 
     # ------------------------------------------------------------------
     # Simple threshold fast-path
@@ -422,3 +257,56 @@ class Extractor:
         max_area = max(areas)
         thr = max_area * min_ratio
         return [c for c, a in zip(contours, areas) if a >= thr]
+
+    def _shadow_reflection_resistant_segmentation(self, bgr):
+        """
+        Heavy-duty segmentation robust to reflections and shadows.
+        Works in LAB + HSV color spaces, removes specular highlights,
+        equalizes illumination, then thresholds adaptively.
+        """
+        img = bgr.copy()
+        img = cv2.medianBlur(img, 5)
+
+        # --- 1️⃣  Specular highlight mask -----------------------------------
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        # pixels above 92% brightness are reflections
+        _, highlights = cv2.threshold(gray, int(0.92 * gray.max()), 255, cv2.THRESH_BINARY)
+        highlights = cv2.dilate(highlights, np.ones((5,5), np.uint8), iterations=2)
+
+        # --- 2️⃣  Color normalize (gray-world) ------------------------------
+        lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
+        l, a, b = cv2.split(lab)
+        l = cv2.equalizeHist(l)
+        lab = cv2.merge((l, a, b))
+        img_norm = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
+
+        # --- 3️⃣  HSV lightness normalization -------------------------------
+        hsv = cv2.cvtColor(img_norm, cv2.COLOR_BGR2HSV)
+        h, s, v = cv2.split(hsv)
+        v = cv2.equalizeHist(v)
+        hsv = cv2.merge((h, s, v))
+        img_eq = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
+
+        # --- 4️⃣  Convert to gray, suppress highlights ----------------------
+        gray = cv2.cvtColor(img_eq, cv2.COLOR_BGR2GRAY)
+        gray = cv2.inpaint(gray, highlights, 5, cv2.INPAINT_TELEA)
+
+        # --- 5️⃣  Adaptive + Otsu combo ------------------------------------
+        blur = cv2.GaussianBlur(gray, (5, 5), 0)
+        _, otsu = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+        adapt = cv2.adaptiveThreshold(
+            blur, 255,
+            cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV,
+            blockSize=45, C=2
+        )
+        bw = cv2.bitwise_or(otsu, adapt)
+
+        # --- 6️⃣  Morphological repairs ------------------------------------
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5,5))
+        bw = cv2.morphologyEx(bw, cv2.MORPH_CLOSE, kernel, iterations=3)
+        bw = cv2.morphologyEx(bw, cv2.MORPH_OPEN,  kernel, iterations=2)
+
+        if PREPROCESS_DEBUG_MODE:
+            self._save_temp("reflection_shadow_fixed_bw.png", bw)
+
+        return bw
