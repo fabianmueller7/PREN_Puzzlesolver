@@ -2,6 +2,8 @@ import cv2
 import numpy as np
 import os
 import sys
+#uncomment as soon as alternative solver is ready
+#import math
 
 from .Distance import real_edge_compute, generated_edge_compute
 from .Extractor import Extractor
@@ -27,6 +29,10 @@ from .tuple_helper import (
     corner_puzzle_alignment,
     display_dim,
 )
+
+#uncomment as soon as alternative solver is ready
+#import threading
+#from .alternative_solver import AlternativeSolver
 
 
 class Puzzle:
@@ -65,6 +71,16 @@ class Puzzle:
     def solve_puzzle(self):
         self.log(">>> START solving puzzle")
 
+        # Start the alternative solver concurrently. It will analyze the
+        # already-extracted pieces and store results in `self.alt_results`.
+        #try:
+        ##    alt = AlternativeSolver(self)
+        ##    t = threading.Thread(target=alt.run, daemon=True)
+        #    t.start()
+        #except Exception:
+            # Non critical: if the alternative solver fails to start, continue
+        #    self.log("Alt solver failed to start; continuing with main solver")
+
         # Separate border pieces from the other
         connected_pieces = []
         border_pieces = self.border_pieces.copy()
@@ -92,13 +108,28 @@ class Puzzle:
         start_piece.coord = (0, 0)
         self.corner_pos = [((0, 0), start_piece)]  # we start with a corner
 
+        #uncomment as soon as alternative solver is ready
+        #rotation_count = 0
         for i in range(4):
             if (
                 start_piece.edge_in_direction(Directions.S).connected
                 and start_piece.edge_in_direction(Directions.W).connected
             ):
                 break
+            # rotate logical edge directions (clockwise by 90°)
             start_piece.rotate_edges(1)
+            #uncomment as soon as alternative solver is ready
+            # rotate actual geometry (edge shapes + piece pixels) to match the
+            # updated directions so the first piece is really placed in the
+            # chosen corner orientation (rotate 90° clockwise)
+            #angle = - (math.pi / 2)  # radians, negative = clockwise
+            #center = start_piece.get_center()
+            #for edge in start_piece.edges_:
+            #    for idx, pt in enumerate(edge.shape):
+            #        edge.shape[idx] = rotate(pt, angle, center)
+            # rotate piece pixels as well
+            #start_piece.rotate(angle, center)
+            #rotation_count += 1
 
         self.extremum = (0, 0, 1, 1)
 
