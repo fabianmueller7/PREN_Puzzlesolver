@@ -21,6 +21,7 @@ from GUI.Viewer import Viewer               # Import des Hauptfensters (eigene K
 if __name__ == "__main__":
     # Create and use temporary directory
     temp_dir = tempfile.TemporaryDirectory()
+    print(f"Temporary directory created at: {temp_dir.name}")
     os.environ["ZOLVER_TEMP_DIR"] = temp_dir.name
     atexit.register(temp_dir.cleanup)
 

@@ -1,0 +1,21 @@
+flowchart TD
+    A(Start Solver) --> B{Rotation Mode?}
+    B -->|Sequential| C(Sequential Rotation Loop)
+    B -->|Parallel| D(Thread Loop)
+
+    %% Sequential Mode
+    C --> E[Evaluate All Rotations]
+    E --> F{Solution Found?}
+    F -->|Yes| G(Return Solution)
+    F -->|No| H(End)
+
+    %% Parallel Mode
+    D --> I[Create Worker Threads]
+    I --> J[Distribute Rotations to Threads]
+    J --> K[Thread Solves Rotation]
+    K --> L{Solution Found?}
+    L -->|Yes| M[Set Result and Stop Others]
+    L -->|No| D
+    M --> G
+
+    G --> H(End)

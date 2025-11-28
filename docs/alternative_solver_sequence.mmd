@@ -1,0 +1,28 @@
+sequenceDiagram
+    participant ASolver as AlternativeSolver
+    participant PuzzleOwner as Puzzle
+    participant Pieces as Pieces
+
+    ASolver->>ASolver: run()
+    ASolver->>ASolver: _classify_corners()
+    ASolver-->>ASolver: corner_candidates, possible_corners
+    ASolver->>ASolver: _measure_straight_edges()
+    ASolver-->>ASolver: straight_edges
+    ASolver->>ASolver: _greedy_group_edges()
+    ASolver-->>ASolver: groups
+    ASolver->>ASolver: _profile_non_straight_edges()
+    ASolver-->>ASolver: non_straight_profiles
+    ASolver->>ASolver: check num_pieces == 4
+    alt is 4
+        ASolver->>ASolver: _attempt_assemble_2x2()
+        ASolver->>Pieces: iterate permutations
+        ASolver->>Pieces: iterate rotation combinations
+        ASolver->>ASolver: check corner border edges
+        ASolver->>ASolver: check inner adjacency compatibility
+        ASolver->>ASolver: check edge length similarity
+        ASolver-->>ASolver: assembly_2x2 or null
+    else
+        ASolver->>ASolver: skip small-assembly
+    end
+    ASolver->>PuzzleOwner: puzzle.alt_results = results
+    note over ASolver: done - thread exits
