@@ -43,8 +43,8 @@ class Viewer(QMainWindow):
         self.createActions()
         self.createMenus()
 
-        self.setWindowTitle("Zolver")
-        self.resize(500, 400)
+        self.setWindowTitle("PREN_Puzzlesolver")
+        self.resize(1000, 800)
 
     def open(self):
         """
