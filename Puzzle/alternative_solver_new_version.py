@@ -2,8 +2,19 @@ import threading
 import queue
 import math
 from typing import List, Optional
+import numpy as np
 from .Enums import TypeEdge
-from Puzzle import Puzzle, Piece
+from .Puzzle import Puzzle
+from .PuzzlePiece import PuzzlePiece as Piece
+
+
+def edge_length(shape: np.ndarray) -> float:
+    """Compute the arc length of an edge shape (sequence of (x,y))."""
+    if shape is None or len(shape) < 2:
+        return 0.0
+    diffs = np.diff(np.asarray(shape, dtype=float), axis=0)
+    dists = np.hypot(diffs[:, 0], diffs[:, 1])
+    return float(dists.sum())
 
 
 class AlternativeSolver(threading.Thread):
@@ -54,7 +65,7 @@ class AlternativeSolver(threading.Thread):
             flat_edges = 0
 
             for e in piece.edges_:
-                if e.type == TypeEdge.FLAT:
+                if e.type == TypeEdge.BORDER:
                     flat_edges += 1
                 elif getattr(e, "curvature", 0) < 0.15:
                     # allow "almost flat" edges
@@ -67,7 +78,7 @@ class AlternativeSolver(threading.Thread):
         if len(possible_corners) == 0:
             # old strict logic
             for piece in self.puzzle.pieces_:
-                count = sum(1 for e in piece.edges_ if e.type == TypeEdge.FLAT)
+                count = sum(1 for e in piece.edges_ if e.type == TypeEdge.BORDER)
                 if count == 2:
                     possible_corners.append(piece)
 
@@ -87,7 +98,7 @@ class AlternativeSolver(threading.Thread):
         Smaller = better.
         """
         # classic diff
-        diff = abs(e1.length - e2.length)
+        diff = abs(edge_length(e1.shape) - edge_length(e2.shape))
 
         # use angle if present
         if hasattr(e1, "angle") and hasattr(e2, "angle"):
@@ -102,7 +113,7 @@ class AlternativeSolver(threading.Thread):
         best_score = math.inf
 
         for candidate in self.puzzle.pieces_:
-            if candidate.number in used_pieces:
+            if self.puzzle.pieces_.index(candidate) in used_pieces:
                 continue
             if candidate == piece:
                 continue
@@ -111,7 +122,7 @@ class AlternativeSolver(threading.Thread):
             for edge1 in piece.edges_:
                 for edge2 in candidate.edges_:
                     # border edges never match each other
-                    if edge1.type == TypeEdge.FLAT and edge2.type == TypeEdge.FLAT:
+                    if edge1.type == TypeEdge.BORDER and edge2.type == TypeEdge.BORDER:
                         continue
 
                     score = self.edge_diff(edge1, edge2)
@@ -137,14 +148,14 @@ class AlternativeSolver(threading.Thread):
             print("[AlternativeSolver] No corners detected → abort.")
             return
 
-        print(f"[AlternativeSolver] corners detected: {[c.number for c in corners]}")
+        print(f"[AlternativeSolver] corners detected: {[self.puzzle.pieces_.index(c) for c in corners]}")
 
         used = set()
         solution = {}
 
         start_piece = corners[0]
-        used.add(start_piece.number)
-        solution[0] = start_piece.number
+        used.add(self.puzzle.pieces_.index(start_piece))
+        solution[0] = self.puzzle.pieces_.index(start_piece)
 
         current = start_piece
 
@@ -155,12 +166,12 @@ class AlternativeSolver(threading.Thread):
             if match is None:
                 # try random corner fallback if stuck
                 for p in self.puzzle.pieces_:
-                    if p.number not in used:
+                    if self.puzzle.pieces_.index(p) not in used:
                         match = p
                         break
 
-            used.add(match.number)
-            solution[index] = match.number
+            used.add(self.puzzle.pieces_.index(match))
+            solution[index] = self.puzzle.pieces_.index(match)
             current = match
             index += 1
 

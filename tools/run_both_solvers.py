@@ -14,6 +14,7 @@ prints and optionally opens the generated images and alt-results JSON.
 import argparse
 import json
 import os
+import queue
 import sys
 import tempfile
 import time
@@ -27,12 +28,18 @@ REPO_ROOT = os.path.dirname(THIS_DIR)
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
+from Puzzle.alternative_solver_new_version import AlternativeSolver
 from Puzzle.Puzzle import Puzzle
 
 
 def main():
     parser = argparse.ArgumentParser(description='Run main and alternative solver on one image')
-    parser.add_argument('--image', required=False, default=os.path.join('resources', 'jigsaw-samples', 'Test-erweitert.png'), help='Path to puzzle image (relative to PREN_Puzzlesolver root)')
+    parser.add_argument(
+        '--image',
+        required=False,
+        default=os.path.join('PREN_Puzzlesolver', 'resources', 'pren-samples', 'PREN-Samples_2.jpg'),
+        help='Path to puzzle image (relative to PREN_Puzzlesolver root). Note: The default image path may not exist in all setups.'
+    )
     parser.add_argument('--wait-alt-seconds', type=float, default=30.0, help='Seconds to wait for alternative solver results after main solver completes')
     parser.add_argument('--open', action='store_true', help='Open output images and JSON with the OS default application')
     args = parser.parse_args()
@@ -40,6 +47,8 @@ def main():
     img_path = os.path.abspath(args.image)
     if not os.path.exists(img_path):
         print('Image not found:', img_path)
+        print('Please provide a valid image path using the --image argument.')
+        print("Example: --image resources/jigsaw-samples/Test-erweitert.png")
         return
 
     # Prepare temporary directory and env var used by the solver
@@ -64,6 +73,11 @@ def main():
     puzzle.solve_puzzle()
 
     print('Main solver finished. Checking for alternative solver results...')
+    
+    # Start the alternative solver.
+    alternative = AlternativeSolver(puzzle, queue.Queue()) 
+    alternative.start()  # Start the alternative solver thread (if not already started by Puzzle)
+
 
     # Wait for alt_results to appear (poll)
     waited = 0.0
@@ -98,24 +112,17 @@ def main():
     else:
         print(f'No alt_results after {args.wait_alt_seconds} seconds.')
 
-    # Look for final solver output images in temp dir
-    stick_path = os.path.join(temp_dir.name, 'stick.png')
-    colored_path = os.path.join(temp_dir.name, 'colored.png')
-    print('\nMain solver exported images (if available):')
-    for p in (stick_path, colored_path):
-        if os.path.exists(p):
-            print(' -', p)
-            if args.open:
-                try:
-                    os.startfile(p)
-                except Exception:
-                    pass
-        else:
-            print(' - missing:', p)
-
+    # Optionally open alt_results.json if requested
     if hasattr(puzzle, 'alt_results') and args.open:
         try:
-            os.startfile(out_json)
+            if sys.platform.startswith('win'):
+                os.startfile(out_json)
+            elif sys.platform.startswith('darwin'):
+                import subprocess
+                subprocess.run(['open', out_json])
+            else:
+                import subprocess
+                subprocess.run(['xdg-open', out_json])
         except Exception:
             pass
 
