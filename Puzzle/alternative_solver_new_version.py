@@ -1,7 +1,7 @@
 import threading
 import queue
 import math
-from typing import List, Optional
+from typing import List, Optional, Tuple
 import numpy as np
 from .Enums import TypeEdge
 from .Puzzle import Puzzle
@@ -15,6 +15,49 @@ def edge_length(shape: np.ndarray) -> float:
     diffs = np.diff(np.asarray(shape, dtype=float), axis=0)
     dists = np.hypot(diffs[:, 0], diffs[:, 1])
     return float(dists.sum())
+
+
+def max_deviation_from_line(shape: np.ndarray) -> Tuple[float, int]:
+    """Return (max_deviation, index_of_max) from straight line between ends.
+
+    Uses perpendicular distance from the baseline to each intermediate point.
+    """
+    pts = np.asarray(shape, dtype=float)
+    if pts.shape[0] < 3:
+        return 0.0, 0
+    p0 = pts[0]
+    p1 = pts[-1]
+    baseline = p1 - p0
+    baseline_len = np.hypot(baseline[0], baseline[1])
+    if baseline_len == 0:
+        return 0.0, 0
+    unit_baseline = baseline / baseline_len
+    
+    max_dev = 0.0
+    max_idx = 0
+    for i in range(1, len(pts) - 1):
+        vec = pts[i] - p0
+        proj = np.dot(vec, unit_baseline)
+        proj_point = p0 + proj * unit_baseline
+        dev = np.hypot(pts[i][0] - proj_point[0], pts[i][1] - proj_point[1])
+        if dev > max_dev:
+            max_dev = dev
+            max_idx = i
+    return max_dev, max_idx
+
+
+def straight_length(shape: np.ndarray, threshold: float = 1.0) -> float:
+    """Compute the length of the straight part of the edge until deviation exceeds threshold."""
+    if shape is None or len(shape) < 3:
+        return edge_length(shape)
+    max_dev, idx = max_deviation_from_line(shape)
+    if max_dev <= threshold:
+        return edge_length(shape)
+    # Length up to idx
+    if idx < 2:
+        return 0.0
+    straight_shape = shape[:idx+1]
+    return edge_length(straight_shape)
 
 
 class AlternativeSolver(threading.Thread):
@@ -56,31 +99,17 @@ class AlternativeSolver(threading.Thread):
 
     def detect_corners(self) -> List[Piece]:
         """
-        More tolerant corner detection.
-        A corner is a piece with >= 2 border-like edges.
+        Detect corners by finding pieces with 2 adjacent straight (BORDER) edges.
         """
         possible_corners = []
 
         for piece in self.puzzle.pieces_:
-            flat_edges = 0
-
-            for e in piece.edges_:
-                if e.type == TypeEdge.BORDER:
-                    flat_edges += 1
-                elif getattr(e, "curvature", 0) < 0.15:
-                    # allow "almost flat" edges
-                    flat_edges += 1
-
-            if flat_edges >= 2:
-                possible_corners.append(piece)
-
-        # strict mode fallback:
-        if len(possible_corners) == 0:
-            # old strict logic
-            for piece in self.puzzle.pieces_:
-                count = sum(1 for e in piece.edges_ if e.type == TypeEdge.BORDER)
-                if count == 2:
+            # Check for two consecutive BORDER edges
+            for i in range(4):
+                if (piece.edges_[i].type == TypeEdge.BORDER and 
+                    piece.edges_[(i+1) % 4].type == TypeEdge.BORDER):
                     possible_corners.append(piece)
+                    break
 
         # final fallback: if puzzle is 2x2, allow all candidates
         if len(possible_corners) == 0 and len(self.puzzle.pieces_) == 4:
@@ -177,6 +206,11 @@ class AlternativeSolver(threading.Thread):
 
         # return solution (a simple ordering of piece numbers)
         self.result_queue.put(solution)
+        self.puzzle.alt_results = {
+            'solution': solution,
+            'corner_candidates': [self.puzzle.pieces_.index(c) for c in corners],
+            'num_pieces': len(self.puzzle.pieces_)
+        }
 
     # ----------------------------------------------------------------------
     # Thread run()
