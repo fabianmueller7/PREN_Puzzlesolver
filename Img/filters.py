@@ -331,11 +331,16 @@ def my_find_corner_signature(cnt, green=False):
 
     edges = []
     types_pieces = []
+
     sigma = 5
     max_sigma = 12
     if not green:
         sigma = 5
         max_sigma = 15
+
+    best_fit = None
+    best_offset = None
+
     while sigma <= max_sigma:
         print("Smooth curve with sigma={}...".format(sigma))
 
@@ -349,41 +354,60 @@ def my_find_corner_signature(cnt, green=False):
         relative_angles = np.array(relative_angles)
         relative_angles_inverse = -np.array(relative_angles)
 
-        extr_tmp = detect_peaks(relative_angles, mph=0.3 * np.max(relative_angles))
+        # Positive peaks
+        max_rel = np.max(relative_angles) if len(relative_angles) > 0 else 0
+        extr_tmp = detect_peaks(relative_angles, mph=0.3 * max_rel) if max_rel > 0 else np.array([], dtype=int)
+
         relative_angles = np.roll(relative_angles, int(len(relative_angles) / 2))
+        max_rel_rolled = max(relative_angles) if len(relative_angles) > 0 else 0
+        extra_peaks = (
+            detect_peaks(relative_angles, mph=0.3 * max_rel_rolled)
+            if max_rel_rolled > 0
+            else np.array([], dtype=int)
+        )
         extr_tmp = np.append(
             extr_tmp,
-            (
-                detect_peaks(relative_angles, mph=0.3 * max(relative_angles))
-                - int(len(relative_angles) / 2)
-            )
-            % len(relative_angles),
+            (extra_peaks - int(len(relative_angles) / 2)) % len(relative_angles),
             axis=0,
-        )
+            )
         relative_angles = np.roll(relative_angles, -int(len(relative_angles) / 2))
         extr_tmp = np.unique(extr_tmp)
 
-        extr_tmp_inverse = detect_peaks(
-            relative_angles_inverse, mph=0.3 * np.max(relative_angles_inverse)
+        # Negative peaks
+        max_rel_inv = np.max(relative_angles_inverse) if len(relative_angles_inverse) > 0 else 0
+        extr_tmp_inverse = (
+            detect_peaks(relative_angles_inverse, mph=0.3 * max_rel_inv)
+            if max_rel_inv > 0
+            else np.array([], dtype=int)
         )
+
         relative_angles_inverse = np.roll(
             relative_angles_inverse, int(len(relative_angles_inverse) / 2)
+        )
+        max_rel_inv_rolled = max(relative_angles_inverse) if len(relative_angles_inverse) > 0 else 0
+        extra_peaks_inv = (
+            detect_peaks(relative_angles_inverse, mph=0.3 * max_rel_inv_rolled)
+            if max_rel_inv_rolled > 0
+            else np.array([], dtype=int)
         )
         extr_tmp_inverse = np.append(
             extr_tmp_inverse,
             (
-                detect_peaks(
-                    relative_angles_inverse, mph=0.3 * max(relative_angles_inverse)
-                )
-                - int(len(relative_angles_inverse) / 2)
-            )
-            % len(relative_angles_inverse),
+                    extra_peaks_inv - int(len(relative_angles_inverse) / 2)
+            ) % len(relative_angles_inverse),
             axis=0,
+            )
+        relative_angles_inverse = np.roll(
+            relative_angles_inverse, -int(len(relative_angles_inverse) / 2)
         )
         extr_tmp_inverse = np.unique(extr_tmp_inverse)
 
         extr = extr_tmp
         extr_inverse = extr_tmp_inverse
+
+        if len(relative_angles) == 0 or len(extr) < 4:
+            sigma += 1
+            continue
 
         relative_angles = normalized(relative_angles[:, np.newaxis], axis=0).ravel()
 
@@ -392,45 +416,49 @@ def my_find_corner_signature(cnt, green=False):
         combs_l = list(combs)
         OFFSET_LOW = len(relative_angles) / 8
         OFFSET_HIGH = len(relative_angles) / 2.0
-        for icomb, comb in enumerate(combs_l):
+
+        for comb in combs_l:
             if (
-                (comb[0] > comb[1])
-                and (comb[1] > comb[2])
-                and (comb[2] > comb[3])
-                and ((comb[0] - comb[1]) > OFFSET_LOW)
-                and ((comb[0] - comb[1]) < OFFSET_HIGH)
-                and ((comb[1] - comb[2]) > OFFSET_LOW)
-                and ((comb[1] - comb[2]) < OFFSET_HIGH)
-                and ((comb[2] - comb[3]) > OFFSET_LOW)
-                and ((comb[2] - comb[3]) < OFFSET_HIGH)
-                and ((comb[3] + (len(relative_angles) - comb[0])) > OFFSET_LOW)
-                and ((comb[3] + (len(relative_angles) - comb[0])) < OFFSET_HIGH)
+                    (comb[0] > comb[1])
+                    and (comb[1] > comb[2])
+                    and (comb[2] > comb[3])
+                    and ((comb[0] - comb[1]) > OFFSET_LOW)
+                    and ((comb[0] - comb[1]) < OFFSET_HIGH)
+                    and ((comb[1] - comb[2]) > OFFSET_LOW)
+                    and ((comb[1] - comb[2]) < OFFSET_HIGH)
+                    and ((comb[2] - comb[3]) > OFFSET_LOW)
+                    and ((comb[2] - comb[3]) < OFFSET_HIGH)
+                    and ((comb[3] + (len(relative_angles) - comb[0])) > OFFSET_LOW)
+                    and ((comb[3] + (len(relative_angles) - comb[0])) < OFFSET_HIGH)
             ):
-                if is_acceptable_comb(
-                    (comb[3], comb[2], comb[1], comb[0]), extr, len(relative_angles)
-                ) and is_acceptable_comb(
-                    (comb[3], comb[2], comb[1], comb[0]),
-                    extr_inverse,
-                    len(relative_angles),
+                candidate = (comb[3], comb[2], comb[1], comb[0])
+                if is_acceptable_comb(candidate, extr, len(relative_angles)) and is_acceptable_comb(
+                        candidate, extr_inverse, len(relative_angles)
                 ):
-                    tmp_combs_final.append((comb[3], comb[2], comb[1], comb[0]))
-        sigma += 1
+                    tmp_combs_final.append(candidate)
+
         if len(tmp_combs_final) == 0:
+            sigma += 1
             continue
 
-        best_fit = tmp_combs_final[
-            compute_comp(tmp_combs_final, relative_angles, method="flat")
-        ]
+        # Best corner fit for this sigma
+        best_fit = np.array(
+            tmp_combs_final[
+                compute_comp(tmp_combs_final, relative_angles, method="flat")
+            ],
+            dtype=int,
+        )
 
         # Roll the values of relative angles for this combination
-        offset = len(relative_angles) - best_fit[3] - 1
-        relative_angles = np.roll(relative_angles, offset)
-        best_fit += offset
-        extr = (extr + offset) % len(relative_angles)
-        extr_inverse = (extr_inverse + offset) % len(relative_angles)
+        best_offset = len(relative_angles) - best_fit[3] - 1
+        relative_angles = np.roll(relative_angles, best_offset)
+        best_fit = best_fit + best_offset
+        extr = (extr + best_offset) % len(relative_angles)
+        extr_inverse = (extr_inverse + best_offset) % len(relative_angles)
 
         tmp_types_pieces = []
         no_undefined = True
+
         for best_comb in [
             [0, best_fit[0]],
             [best_fit[0], best_fit[1]],
@@ -450,22 +478,31 @@ def my_find_corner_signature(cnt, green=False):
         if no_undefined:
             break
 
-    if len(types_pieces) != 0 and types_pieces[-1] == TypeEdge.UNDEFINED:
-        print("UNDEFINED FOUND - try to continue but something bad happened :(")
-        print(tmp_types_pieces[-1])
+        sigma += 1
 
-    best_fit_tmp = best_fit - offset
+    # No valid fit found at all
+    if best_fit is None or best_offset is None or len(types_pieces) == 0:
+        return None, None, None
+
+    if types_pieces[-1] == TypeEdge.UNDEFINED:
+        print("UNDEFINED FOUND - try to continue but something bad happened :(")
+        print(types_pieces[-1])
+
+    # Back to original contour indexing
+    best_fit_tmp = (best_fit - best_offset).astype(int)
+
     for i in range(3):
         edges.append(cnt[best_fit_tmp[i] : best_fit_tmp[i + 1]])
     edges.append(
         np.concatenate((cnt[best_fit_tmp[3] :], cnt[: best_fit_tmp[0]]), axis=0)
     )
 
-    edges = [
-        np.array([x[0] for x in e]) for e in edges
-    ]  # quick'n'dirty fix of the shape
+    # quick'n'dirty fix of the shape
+    edges = [np.array([x[0] for x in e]) for e in edges]
+
+    # Preserve original return format
     types_pieces.append(types_pieces[0])
-    return best_fit, edges, types_pieces[1:]
+    return best_fit_tmp, edges, types_pieces[1:]
 
 
 def export_contours(
@@ -632,6 +669,61 @@ def export_contours_without_colormatching(
     from multiprocessing import Pool, cpu_count
     import itertools
 
+    def assign_directions_from_geometry(edges_shape):
+        if len(edges_shape) != 4:
+            raise ValueError(f"Expected 4 edges, got {len(edges_shape)}")
+
+        all_pts = np.vstack([np.asarray(s, dtype=float) for s in edges_shape])
+        center = all_pts.mean(axis=0)
+
+        edge_infos = []
+        for i, shape in enumerate(edges_shape):
+            pts = np.asarray(shape, dtype=float)
+            if len(pts) < 2:
+                raise ValueError(f"Edge {i} has too few points")
+
+            midpoint = (pts[0] + pts[-1]) / 2.0
+            dx = midpoint[0] - center[0]
+            dy = midpoint[1] - center[1]
+            angle = np.arctan2(dy, dx)
+            edge_infos.append({
+                "index": i,
+                "midpoint": midpoint,
+                "dx": dx,
+                "dy": dy,
+                "angle": angle,
+            })
+
+        # sort cyclically around the center
+        edge_infos.sort(key=lambda e: e["angle"])
+
+        # find the edge whose midpoint is highest (smallest y relative to center)
+        up_pos = min(range(4), key=lambda k: edge_infos[k]["dy"])
+
+        # rotate sorted list so it starts with UP
+        ordered = edge_infos[up_pos:] + edge_infos[:up_pos]
+
+        # Determine whether cyclic order is clockwise or counterclockwise
+        # In image coords, y grows downward
+        mids = [e["midpoint"] for e in ordered]
+        area2 = 0.0
+        for a, b in zip(mids, mids[1:] + mids[:1]):
+            area2 += a[0] * b[1] - b[0] * a[1]
+
+        if area2 > 0:
+            # counterclockwise -> UP, LEFT, DOWN, RIGHT
+            assigned_dirs = [directions[0], directions[3], directions[2], directions[1]]
+        else:
+            # clockwise -> UP, RIGHT, DOWN, LEFT
+            assigned_dirs = [directions[0], directions[1], directions[2], directions[3]]
+
+        dir_map = {
+            ordered[k]["index"]: assigned_dirs[k]
+            for k in range(4)
+        }
+
+        return dir_map
+
     with Pool(cpu_count()) as p:
         signatures = p.starmap(
             my_find_corner_signature, zip(contours, itertools.repeat(green))
@@ -639,7 +731,7 @@ def export_contours_without_colormatching(
 
     for idx, cnt in enumerate(contours):
         corners, edges_shape, types_edges = signatures[idx]
-        if corners is None:
+        if corners is None or len(edges_shape) != 4:
             continue
 
         mask_border = np.zeros_like(img_bw)
@@ -653,15 +745,17 @@ def export_contours_without_colormatching(
         xs, ys = np.where(mask_full == 255)
         pixels = {(x, y): img_piece[x, y] for x, y in zip(xs, ys)}
 
+        dir_map = assign_directions_from_geometry(edges_shape)
+
         edges = [
             Edge(
-                s,
+                edges_shape[i],
                 None,
                 edge_type=types_edges[i],
-                direction=directions[i],
+                direction=dir_map[i],
                 connected=types_edges[i] == TypeEdge.BORDER,
             )
-            for i, s in enumerate(edges_shape)
+            for i in range(4)
         ]
 
         puzzle_pieces.append(PuzzlePiece(edges, pixels))
@@ -676,8 +770,7 @@ def export_contours_without_colormatching(
             out[mask_border == 255] = img_bw[mask_border == 255]
 
             x, y, w, h = cv2.boundingRect(cnt)
-            out2 = out[y : y + h, x : x + w]
-
+            out2 = out[y:y+h, x:x+w]
             list_img.append(out2)
 
     if export_img and list_img:
@@ -689,12 +782,8 @@ def export_contours_without_colormatching(
         )
         for index, image in enumerate(list_img):
             pieces_img[
-                (max_height * int(index / modulo)) : (
-                        max_height * int(index / modulo) + image.shape[0]
-                ),
-                (max_width * (index % modulo)) : (
-                        max_width * (index % modulo) + image.shape[1]
-                ),
+                (max_height * int(index / modulo)):(max_height * int(index / modulo) + image.shape[0]),
+                (max_width * (index % modulo)):(max_width * (index % modulo) + image.shape[1]),
             ] = image
         cv2.imwrite(path, pieces_img)
 

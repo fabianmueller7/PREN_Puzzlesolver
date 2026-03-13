@@ -18,8 +18,7 @@ piece and edge data but does not modify shapes or directions.
 
 from __future__ import annotations
 
-"import math"
-"import threading"
+
 from typing import List, Dict, Tuple
 
 import numpy as np

@@ -346,33 +346,3 @@ def _edge_geom_distance(e1, e2, n_points=100):
     d2 = np.linalg.norm(c1 - c2[::-1], axis=1).mean()
 
     return min(d1, d2)
-
-
-
-#def generated_edge_compute(e1, e2):
-    """
-    Return the distance between colors of two edges for generated puzzle.
-
-    :param e1: Edge object
-    :param e2: Edge object
-    :return: distance Float
-    """
-    # edge size
-    shapevalue, distvalue = dist_edge(
-        e1.shape[0], e1.shape[-1], e2.shape[0], e2.shape[-1]
-    )
-
-    # edges diff
-    edge_shape_score = diff_match_edges2(np.array(e1.shape), np.array(e2.shape))
-    # Sigmoid
-    K = -1.05
-    edge_shape_score = (K * edge_shape_score) / (K - edge_shape_score + 1)
-
-    # colors
-    e1_lab_colors = get_colors(e1)
-    e2_lab_colors = get_colors(e2)
-    val = min(
-        euclidean_distance(e1_lab_colors, e2_lab_colors),
-        euclidean_distance(e1_lab_colors, e2_lab_colors[::-1]),
-    )
-    return val * (1.0 + math.sqrt(shapevalue) * 0.3) * (1.0 + edge_shape_score * 0.001)
