@@ -2,11 +2,12 @@ import cv2
 import numpy as np
 import os
 import sys
+import config
 #uncomment as soon as alternative solver is ready
 #import math
 
 from .Distance import real_edge_compute, generated_edge_compute
-from .Extractor import Extractor
+from .Extractor import Extractor, show_image
 from .Mover import stick_pieces
 from .utils import rotate
 
@@ -623,14 +624,14 @@ class Puzzle:
             # ------------------------------------------------------
 
 
-            if display_border:
+            if config.DEBUG_MODE == 1:
                 # Contours
                 for e in piece.edges_:
                     for y, x in e.shape:
                         y, x = y - minY, x - minX
                         if (
-                            0 <= y < border_img.shape[1]
-                            and 0 <= x < border_img.shape[0]
+                                0 <= y < border_img.shape[1]
+                                and 0 <= x < border_img.shape[0]
                         ):
                             rgb = (0, 0, 0)
                             if e.type == TypeEdge.HOLE:
@@ -641,14 +642,26 @@ class Puzzle:
                                 rgb = (255, 0, 0)
                             if e.connected:
                                 rgb = (0, 255, 0)
+
                             border_img[x, y, 0] = rgb[2]
                             border_img[x, y, 1] = rgb[1]
                             border_img[x, y, 2] = rgb[0]
-                cv2.imwrite(path_contour, border_img)
-                self.viewer.addImage(name_contour, path_contour, display=False)
 
-        cv2.imwrite(path_colored, colored_img)
-        self.viewer.addImage(name_colored, path_colored)
+                cv2.imwrite(path_contour, border_img)
+
+                if config.DEBUG_MODE == 1:
+                    show_image(border_img,"contour category image")
+
+            cv2.imwrite(path_colored, colored_img)
+
+    def show_image(img, name="image"):
+        """Helper for quick visual debugging (only used if PREPROCESS_DEBUG_MODE == 1)."""
+        import matplotlib.pyplot as plt
+
+        plt.axis("off")
+        plt.title(name)
+        plt.imshow(img, cmap="gray" if len(img.shape) == 2 else None)
+        plt.show()
 
     def compute_possible_size(self, nb_piece, nb_border) -> list[tuple]:
         """

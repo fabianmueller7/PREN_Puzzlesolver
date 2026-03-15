@@ -8,6 +8,7 @@ import numpy as np
 import cv2
 import matplotlib.pyplot as plt
 import scipy
+import config
 
 from Puzzle.Edge import Edge
 from Puzzle.Enums import directions, TypeEdge
@@ -38,7 +39,7 @@ Wichtige externe Abhängigkeiten:
 COUNT = 0
 
 
-def get_relative_angles(cnt, export=False, sigma=5):
+def get_relative_angles(cnt, export, sigma=5):
     """
     Berechnet die relativen Winkeländerungen entlang einer Kontur.
 
@@ -349,7 +350,9 @@ def my_find_corner_signature(cnt, green=False):
         # Find relative angles
         cnt_convert = [c[0] for c in cnt]
         relative_angles = get_relative_angles(
-            np.array(cnt_convert), export=False, sigma=sigma
+            np.array(cnt_convert),
+            export=(config.DEBUG_MODE == 1),
+            sigma=sigma
         )
         relative_angles = np.array(relative_angles)
         relative_angles_inverse = -np.array(relative_angles)
@@ -534,10 +537,16 @@ def export_contours(
     list_img = []
     out_color = np.zeros_like(img)
 
-    with Pool(cpu_count()) as p:
-        signatures = p.starmap(
-            my_find_corner_signature, zip(contours, itertools.repeat(green))
-        )
+    if config.DEBUG_MODE == 1:
+        signatures = [
+            my_find_corner_signature(cnt, green)
+            for cnt in contours
+        ]
+    else:
+        with Pool(cpu_count()) as p:
+            signatures = p.starmap(
+                my_find_corner_signature, zip(contours, itertools.repeat(green))
+            )
 
     for idx, cnt in enumerate(contours):
         corners, edges_shape, types_edges = signatures[idx]
@@ -724,10 +733,16 @@ def export_contours_without_colormatching(
 
         return dir_map
 
-    with Pool(cpu_count()) as p:
-        signatures = p.starmap(
-            my_find_corner_signature, zip(contours, itertools.repeat(green))
-        )
+    if config.DEBUG_MODE == 1:
+        signatures = [
+            my_find_corner_signature(cnt, green)
+            for cnt in contours
+        ]
+    else:
+        with Pool(cpu_count()) as p:
+            signatures = p.starmap(
+                my_find_corner_signature, zip(contours, itertools.repeat(green))
+            )
 
     for idx, cnt in enumerate(contours):
         corners, edges_shape, types_edges = signatures[idx]
