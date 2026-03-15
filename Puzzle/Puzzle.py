@@ -87,12 +87,23 @@ class Puzzle:
         border_pieces = self.border_pieces.copy()
         non_border_pieces = self.non_border_pieces.copy()
 
-        # Start by a corner piece
+        # Start by a corner piece if possible. If border classification is still
+        # imperfect, fall back to the piece with the highest number of border edges.
+        start_piece = None
         for piece in border_pieces:
             if piece.number_of_border() > 1:
-                connected_pieces.append(piece)
-                border_pieces.remove(piece)
+                start_piece = piece
                 break
+
+        if start_piece is None and border_pieces:
+            start_piece = max(border_pieces, key=lambda p: p.number_of_border())
+            self.log("No corner piece detected reliably; using best border candidate instead.")
+
+        if start_piece is None:
+            raise RuntimeError("No border piece available to start solving.")
+
+        connected_pieces.append(start_piece)
+        border_pieces.remove(start_piece)
 
         self.log("Number of border pieces: ", len(border_pieces) + 1)
 

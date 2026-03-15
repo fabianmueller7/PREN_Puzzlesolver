@@ -17,8 +17,22 @@ class PuzzlePiece:
         self.edges_ = edges
         self.pixels = pixels
         self.nBorders_ = self.number_of_border()
-        self.type = TypePiece(self.nBorders_)
-        self.is_border = self.number_of_border() > 0
+        self.type = self._infer_piece_type(self.nBorders_)
+        self.is_border = self.nBorders_ > 0
+
+    @staticmethod
+    def _infer_piece_type(n_borders):
+        """Map noisy border counts to the closest valid piece class.
+
+        In the ideal case a piece has 0, 1 or 2 border edges. With imperfect
+        extraction the edge classifier can occasionally mark 3 sides as border.
+        That should not crash the solver; treat it as a corner piece.
+        """
+        if n_borders <= 0:
+            return TypePiece.CENTER
+        if n_borders == 1:
+            return TypePiece.BORDER
+        return TypePiece.ANGLE
 
     def get_bbox(self):
         x = list(map(lambda p: p[0], self.pixels))

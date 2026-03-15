@@ -320,6 +320,155 @@ def normalized(a, axis=-1, order=2):
     return a / np.expand_dims(l2, axis)
 
 
+
+
+def contour_signed_area(points):
+    pts = np.asarray(points, dtype=float)
+    if pts.ndim == 3:
+        pts = pts[:, 0, :]
+    if len(pts) < 3:
+        return 0.0
+    x = pts[:, 0]
+    y = pts[:, 1]
+    return 0.5 * np.sum(x * np.roll(y, -1) - np.roll(x, -1) * y)
+
+
+def edge_line_metrics(shape):
+    pts = np.asarray(shape, dtype=float)
+    if pts.ndim == 3:
+        pts = pts[:, 0, :]
+    if len(pts) < 2:
+        return {"chord": 0.0, "max_dev": 0.0, "norm_dev": 0.0, "signed_mean": 0.0}
+
+    start = pts[0]
+    end = pts[-1]
+    chord_vec = end - start
+    chord = float(np.linalg.norm(chord_vec))
+    if chord < 1e-6:
+        return {"chord": 0.0, "max_dev": 0.0, "norm_dev": 0.0, "signed_mean": 0.0}
+
+    rel = pts - start
+    signed = (chord_vec[0] * rel[:, 1] - chord_vec[1] * rel[:, 0]) / chord
+    max_dev = float(np.max(np.abs(signed))) if len(signed) else 0.0
+    usable = signed[1:-1] if len(signed) > 2 else signed
+    signed_mean = float(np.mean(usable)) if len(usable) else 0.0
+    return {
+        "chord": chord,
+        "max_dev": max_dev,
+        "norm_dev": max_dev / max(chord, 1.0),
+        "signed_mean": signed_mean,
+    }
+
+
+def classify_edge_from_shape(shape, contour_orientation, border_threshold=0.10):
+    metrics = edge_line_metrics(shape)
+    if metrics["chord"] <= 1.0:
+        return TypeEdge.UNDEFINED
+    if metrics["norm_dev"] <= border_threshold:
+        return TypeEdge.BORDER
+
+    # contour orientation: >0 counter-clockwise, <0 clockwise
+    # For a CCW contour the interior is mainly on the left side of the directed edge.
+    # A protrusion points outward, i.e. opposite the interior side.
+    signed_mean = metrics["signed_mean"]
+    interior_sign = 1.0 if contour_orientation > 0 else -1.0
+    if signed_mean * interior_sign > 0:
+        return TypeEdge.HOLE
+    return TypeEdge.HEAD
+
+
+def split_contour_by_corner_indices(cnt, corner_indices):
+    pts = np.asarray(cnt)
+    n = len(pts)
+    if n == 0 or len(corner_indices) != 4:
+        return None
+
+    corners = np.sort(np.asarray(corner_indices, dtype=int) % n)
+    edges = []
+    for i in range(3):
+        seg = pts[corners[i]:corners[i + 1]]
+        if len(seg) < 2:
+            return None
+        edges.append(seg)
+    seg = np.concatenate((pts[corners[3]:], pts[:corners[0] + 1]), axis=0)
+    if len(seg) < 2:
+        return None
+    edges.append(seg)
+    return [np.array([x[0] for x in e]) if np.asarray(e).ndim == 3 else np.asarray(e) for e in edges]
+
+
+def fallback_find_corner_signature(cnt):
+    pts = np.asarray(cnt)
+    if pts.ndim == 3:
+        pts2 = pts[:, 0, :].astype(np.float32)
+    else:
+        pts2 = pts.astype(np.float32)
+    if len(pts2) < 8:
+        return None, None, None
+
+    rect = cv2.minAreaRect(pts2)
+    box = cv2.boxPoints(rect)
+
+    corner_indices = []
+    for corner in box:
+        d = np.sum((pts2 - corner) ** 2, axis=1)
+        corner_indices.append(int(np.argmin(d)))
+
+    if len(set(corner_indices)) < 4:
+        return None, None, None
+
+    edges = split_contour_by_corner_indices(cnt, corner_indices)
+    if edges is None or len(edges) != 4:
+        return None, None, None
+
+    orientation = contour_signed_area(pts2)
+    types = [classify_edge_from_shape(e, orientation) for e in edges]
+    return np.sort(np.asarray(corner_indices, dtype=int)), edges, types
+
+
+def refine_edge_types(cnt, edges, initial_types=None):
+    """Refine noisy edge labels and keep the result solver-safe.
+
+    The peak-based classifier is good on clean contours but on difficult pieces it
+    can over-label flat-ish segments as BORDER. A valid jigsaw piece should not
+    have more than two border edges, so if we get 3+ we keep only the flattest
+    candidates as borders and reclassify the rest geometrically.
+    """
+    orientation = contour_signed_area(cnt)
+    metrics = [edge_line_metrics(edge) for edge in edges]
+
+    refined = []
+    for i, edge in enumerate(edges):
+        geom_type = classify_edge_from_shape(edge, orientation)
+        original = None if initial_types is None or i >= len(initial_types) else initial_types[i]
+        if geom_type == TypeEdge.BORDER:
+            refined.append(TypeEdge.BORDER)
+        elif original in (TypeEdge.HOLE, TypeEdge.HEAD):
+            refined.append(original)
+        else:
+            refined.append(geom_type)
+
+    border_idx = [i for i, t in enumerate(refined) if t == TypeEdge.BORDER]
+    if len(border_idx) > 2:
+        # keep only the two geometrically flattest sides as borders
+        border_idx = sorted(border_idx, key=lambda i: metrics[i]["norm_dev"])
+        keep = set(border_idx[:2])
+        for i in range(len(refined)):
+            if refined[i] == TypeEdge.BORDER and i not in keep:
+                signed_mean = metrics[i]["signed_mean"]
+                interior_sign = 1.0 if orientation > 0 else -1.0
+                refined[i] = TypeEdge.HOLE if signed_mean * interior_sign > 0 else TypeEdge.HEAD
+
+    # If everything ended up undefined somehow, recover a little by trusting the
+    # flattest edge as a border when it is much flatter than the others.
+    border_idx = [i for i, t in enumerate(refined) if t == TypeEdge.BORDER]
+    if len(border_idx) == 0 and len(metrics) == 4:
+        ordered = sorted(range(4), key=lambda i: metrics[i]["norm_dev"])
+        if metrics[ordered[0]]["norm_dev"] < 0.65 * metrics[ordered[1]]["norm_dev"]:
+            refined[ordered[0]] = TypeEdge.BORDER
+
+    return refined
+
 def my_find_corner_signature(cnt, green=False):
     """
     Determine the corner/edge positions by analyzing contours.
@@ -483,29 +632,19 @@ def my_find_corner_signature(cnt, green=False):
 
         sigma += 1
 
-    # No valid fit found at all
+    # No valid fit found at all -> try geometric fallback based on minAreaRect
     if best_fit is None or best_offset is None or len(types_pieces) == 0:
-        return None, None, None
-
-    if types_pieces[-1] == TypeEdge.UNDEFINED:
-        print("UNDEFINED FOUND - try to continue but something bad happened :(")
-        print(types_pieces[-1])
+        return fallback_find_corner_signature(cnt)
 
     # Back to original contour indexing
-    best_fit_tmp = (best_fit - best_offset).astype(int)
+    best_fit_tmp = np.sort((best_fit - best_offset).astype(int))
 
-    for i in range(3):
-        edges.append(cnt[best_fit_tmp[i] : best_fit_tmp[i + 1]])
-    edges.append(
-        np.concatenate((cnt[best_fit_tmp[3] :], cnt[: best_fit_tmp[0]]), axis=0)
-    )
+    edges = split_contour_by_corner_indices(cnt, best_fit_tmp)
+    if edges is None or len(edges) != 4:
+        return fallback_find_corner_signature(cnt)
 
-    # quick'n'dirty fix of the shape
-    edges = [np.array([x[0] for x in e]) for e in edges]
-
-    # Preserve original return format
-    types_pieces.append(types_pieces[0])
-    return best_fit_tmp, edges, types_pieces[1:]
+    refined_types = refine_edge_types(np.array([c[0] for c in cnt]), edges, types_pieces)
+    return best_fit_tmp, edges, refined_types
 
 
 def export_contours(
@@ -746,8 +885,11 @@ def export_contours_without_colormatching(
 
     for idx, cnt in enumerate(contours):
         corners, edges_shape, types_edges = signatures[idx]
-        if corners is None or len(edges_shape) != 4:
+        if corners is None or edges_shape is None or len(edges_shape) != 4:
+            print(f"Skipping contour {idx}: could not derive 4 edges reliably")
             continue
+
+        types_edges = refine_edge_types(np.array([c[0] for c in cnt]), edges_shape, types_edges)
 
         mask_border = np.zeros_like(img_bw)
         mask_full = np.zeros_like(img_bw)
