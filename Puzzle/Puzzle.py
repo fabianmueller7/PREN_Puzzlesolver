@@ -236,13 +236,7 @@ class Puzzle:
             )
             block_best_e, best_e = self.best_diff(
                 self.diff, self.connected_directions, left_pieces)
-                # Winkel vom Edge aufs Piece übertragen
-                
-            try:
-                self.edge_to_piece[best_e].rotation_angle = getattr(best_e, "rotation_angle", 0)
-            except Exception:
-                pass
-            
+
             block_best_p, best_p = (
                 self.edge_to_piece[block_best_e],
                 self.edge_to_piece[best_e],
@@ -617,22 +611,6 @@ class Puzzle:
                 list(map(lambda e: e[2], tmp)),
             )
             colored_img[x, y] = c
-
-            # ---- Rotation des Puzzleteils anwenden (visuell) ----
-            if hasattr(piece, "rotation_angle") and piece.rotation_angle != 0:
-                h, w = colored_img.shape[:2]
-                # Erzeuge eine leere Maske für das aktuelle Teil
-                mask = np.zeros_like(colored_img)
-                mask[x, y] = c
-
-                # Rotationsmatrix um den Mittelpunkt des Gesamtbilds
-                M = cv2.getRotationMatrix2D((w // 2, h // 2), float(piece.rotation_angle), 1.0)
-                mask = cv2.warpAffine(mask, M, (w, h),
-                                    flags=cv2.INTER_LINEAR,
-                                    borderMode=cv2.BORDER_CONSTANT,
-                                    borderValue=(0, 0, 0))
-                colored_img = np.maximum(colored_img, mask)
-            # ------------------------------------------------------
 
 
             if config.DEBUG_MODE == 1:

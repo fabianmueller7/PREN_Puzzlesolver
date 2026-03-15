@@ -322,6 +322,162 @@ def normalized(a, axis=-1, order=2):
 
 
 
+def _unwrap_contour_points(cnt):
+    pts = np.asarray(cnt)
+    if pts.ndim == 3:
+        pts = pts[:, 0, :]
+    return np.asarray(pts, dtype=np.float32)
+
+
+def _normalize_vec(v):
+    v = np.asarray(v, dtype=np.float32)
+    n = float(np.linalg.norm(v))
+    if n <= 1e-8:
+        return np.zeros_like(v)
+    return v / n
+
+
+def _circular_index_distance(a, b, n):
+    d = abs(int(a) - int(b))
+    return min(d, n - d)
+
+
+def _ordered_box_corners(box):
+    box = np.asarray(box, dtype=np.float32)
+    center = np.mean(box, axis=0)
+    ang = np.arctan2(box[:, 1] - center[1], box[:, 0] - center[0])
+    order = np.argsort(ang)
+    return box[order]
+
+
+def _refine_corner_around_seed(pts, seed_idx, rect_corner, axis_a, axis_b, search_radius, step):
+    n = len(pts)
+    best_idx = int(seed_idx) % n
+    best_score = -1e18
+    best_dist = float('inf')
+
+    for delta in range(-search_radius, search_radius + 1):
+        idx = (int(seed_idx) + delta) % n
+        p_prev = pts[(idx - step) % n]
+        p = pts[idx]
+        p_next = pts[(idx + step) % n]
+
+        vin = _normalize_vec(p - p_prev)
+        vout = _normalize_vec(p_next - p)
+        if not np.any(vin) or not np.any(vout):
+            continue
+
+        # Real puzzle corners are approximately 90° corners between the two
+        # dominant rectangle axes. The direction on each side can flip, hence abs().
+        assign1 = abs(float(np.dot(vin, axis_a))) + abs(float(np.dot(vout, axis_b)))
+        assign2 = abs(float(np.dot(vin, axis_b))) + abs(float(np.dot(vout, axis_a)))
+        axis_score = max(assign1, assign2) / 2.0
+
+        right_angle_score = 1.0 - abs(float(np.dot(vin, vout)))
+        dist = float(np.linalg.norm(p - rect_corner))
+        dist_score = 1.0 / (1.0 + dist)
+
+        # Favor actual turning points over straight sections near the rectangle corner.
+        score = 3.0 * axis_score + 2.0 * right_angle_score + 0.35 * dist_score
+        if score > best_score or (abs(score - best_score) < 1e-9 and dist < best_dist):
+            best_score = score
+            best_idx = idx
+            best_dist = dist
+
+    return int(best_idx), float(best_score)
+
+
+def refine_corner_indices(cnt, initial_indices=None):
+    pts = _unwrap_contour_points(cnt)
+    n = len(pts)
+    if n < 8:
+        return None
+
+    rect = cv2.minAreaRect(pts)
+    box = _ordered_box_corners(cv2.boxPoints(rect))
+
+    if len(box) != 4:
+        return None
+
+    # Rectangle side directions give the two dominant orthogonal corner directions.
+    axes = []
+    for i in range(4):
+        side = box[(i + 1) % 4] - box[i]
+        unit = _normalize_vec(side)
+        if np.linalg.norm(unit) > 0:
+            axes.append(unit)
+    if len(axes) < 2:
+        return None
+
+    axis_a = axes[0]
+    axis_b = None
+    for cand in axes[1:]:
+        if abs(float(np.dot(cand, axis_a))) < 0.6:
+            axis_b = cand
+            break
+    if axis_b is None:
+        axis_b = _normalize_vec(np.array([-axis_a[1], axis_a[0]], dtype=np.float32))
+
+    nearest_rect = [int(np.argmin(np.sum((pts - corner) ** 2, axis=1))) for corner in box]
+
+    if initial_indices is None or len(initial_indices) != 4:
+        seeds = nearest_rect
+    else:
+        initial_indices = [int(i) % n for i in initial_indices]
+        available = set(initial_indices)
+        seeds = []
+        for base_idx in nearest_rect:
+            if available:
+                best = min(available, key=lambda i: _circular_index_distance(i, base_idx, n))
+                seeds.append(best)
+                available.remove(best)
+            else:
+                seeds.append(base_idx)
+
+    search_radius = max(8, min(n // 12, 80))
+    step = max(2, min(n // 80, 8))
+
+    refined = []
+    scores = []
+    for j in range(4):
+        corner = box[j]
+        prev_side = _normalize_vec(box[(j - 1) % 4] - corner)
+        next_side = _normalize_vec(box[(j + 1) % 4] - corner)
+        idx, score = _refine_corner_around_seed(
+            pts,
+            seeds[j],
+            corner,
+            prev_side,
+            next_side,
+            search_radius,
+            step,
+        )
+        refined.append(idx)
+        scores.append(score)
+
+    # Enforce 4 distinct corners with reasonable spacing.
+    min_sep = max(4, n // 10)
+    ranked = sorted(range(4), key=lambda i: scores[i], reverse=True)
+    chosen = []
+    for ridx in ranked:
+        idx = refined[ridx]
+        if all(_circular_index_distance(idx, other, n) >= min_sep for other in chosen):
+            chosen.append(idx)
+
+    if len(chosen) < 4:
+        candidates = sorted(set(refined + nearest_rect), key=lambda i: min(_circular_index_distance(i, s, n) for s in refined))
+        for idx in candidates:
+            if all(_circular_index_distance(idx, other, n) >= min_sep for other in chosen):
+                chosen.append(idx)
+            if len(chosen) == 4:
+                break
+
+    if len(chosen) < 4:
+        return None
+
+    return np.sort(np.asarray(chosen[:4], dtype=int))
+
+
 def contour_signed_area(points):
     pts = np.asarray(points, dtype=float)
     if pts.ndim == 3:
@@ -361,16 +517,49 @@ def edge_line_metrics(shape):
 
 
 def classify_edge_from_shape(shape, contour_orientation, border_threshold=0.10):
-    metrics = edge_line_metrics(shape)
+    pts = np.asarray(shape, dtype=float)
+    if pts.ndim == 3:
+        pts = pts[:, 0, :]
+    if len(pts) < 3:
+        return TypeEdge.UNDEFINED
+
+    metrics = edge_line_metrics(pts)
     if metrics["chord"] <= 1.0:
         return TypeEdge.UNDEFINED
     if metrics["norm_dev"] <= border_threshold:
         return TypeEdge.BORDER
 
-    # contour orientation: >0 counter-clockwise, <0 clockwise
-    # For a CCW contour the interior is mainly on the left side of the directed edge.
-    # A protrusion points outward, i.e. opposite the interior side.
-    signed_mean = metrics["signed_mean"]
+    start = pts[0]
+    end = pts[-1]
+    chord_vec = end - start
+    chord = float(np.linalg.norm(chord_vec))
+    if chord <= 1e-6:
+        return TypeEdge.UNDEFINED
+
+    rel = pts - start
+    signed = (chord_vec[0] * rel[:, 1] - chord_vec[1] * rel[:, 0]) / chord
+    usable = signed[1:-1] if len(signed) > 2 else signed
+    if len(usable) == 0:
+        return TypeEdge.UNDEFINED
+
+    # Ignore tiny noise around the baseline.
+    amp = float(np.max(np.abs(usable)))
+    if amp <= max(1.5, 0.08 * chord):
+        return TypeEdge.BORDER
+
+    active = usable[np.abs(usable) >= 0.25 * amp]
+    if len(active) == 0:
+        return TypeEdge.UNDEFINED
+
+    pos = int(np.sum(active > 0))
+    neg = int(np.sum(active < 0))
+    dominant_ratio = max(pos, neg) / max(pos + neg, 1)
+
+    # Mixed edges often come from bad corner splits; do not force a sign.
+    if dominant_ratio < 0.72:
+        return TypeEdge.UNDEFINED
+
+    signed_mean = float(np.median(active))
     interior_sign = 1.0 if contour_orientation > 0 else -1.0
     if signed_mean * interior_sign > 0:
         return TypeEdge.HOLE
@@ -398,23 +587,12 @@ def split_contour_by_corner_indices(cnt, corner_indices):
 
 
 def fallback_find_corner_signature(cnt):
-    pts = np.asarray(cnt)
-    if pts.ndim == 3:
-        pts2 = pts[:, 0, :].astype(np.float32)
-    else:
-        pts2 = pts.astype(np.float32)
+    pts2 = _unwrap_contour_points(cnt)
     if len(pts2) < 8:
         return None, None, None
 
-    rect = cv2.minAreaRect(pts2)
-    box = cv2.boxPoints(rect)
-
-    corner_indices = []
-    for corner in box:
-        d = np.sum((pts2 - corner) ** 2, axis=1)
-        corner_indices.append(int(np.argmin(d)))
-
-    if len(set(corner_indices)) < 4:
+    corner_indices = refine_corner_indices(cnt)
+    if corner_indices is None or len(set(corner_indices)) < 4:
         return None, None, None
 
     edges = split_contour_by_corner_indices(cnt, corner_indices)
@@ -423,16 +601,16 @@ def fallback_find_corner_signature(cnt):
 
     orientation = contour_signed_area(pts2)
     types = [classify_edge_from_shape(e, orientation) for e in edges]
+    types = refine_edge_types(pts2, edges, types)
     return np.sort(np.asarray(corner_indices, dtype=int)), edges, types
 
 
 def refine_edge_types(cnt, edges, initial_types=None):
-    """Refine noisy edge labels and keep the result solver-safe.
+    """Refine noisy edge labels conservatively.
 
-    The peak-based classifier is good on clean contours but on difficult pieces it
-    can over-label flat-ish segments as BORDER. A valid jigsaw piece should not
-    have more than two border edges, so if we get 3+ we keep only the flattest
-    candidates as borders and reclassify the rest geometrically.
+    On hard pieces the split may cut slightly before/after the real rectangular
+    corner. In that case an edge can contain both an in- and an outdent signal.
+    Those edges should stay UNDEFINED instead of being forced into HOLE/HEAD.
     """
     orientation = contour_signed_area(cnt)
     metrics = [edge_line_metrics(edge) for edge in edges]
@@ -441,30 +619,27 @@ def refine_edge_types(cnt, edges, initial_types=None):
     for i, edge in enumerate(edges):
         geom_type = classify_edge_from_shape(edge, orientation)
         original = None if initial_types is None or i >= len(initial_types) else initial_types[i]
+
         if geom_type == TypeEdge.BORDER:
             refined.append(TypeEdge.BORDER)
-        elif original in (TypeEdge.HOLE, TypeEdge.HEAD):
+        elif geom_type in (TypeEdge.HOLE, TypeEdge.HEAD):
+            refined.append(geom_type)
+        elif original in (TypeEdge.HOLE, TypeEdge.HEAD) and metrics[i]["norm_dev"] > 0.12:
             refined.append(original)
         else:
-            refined.append(geom_type)
+            refined.append(TypeEdge.UNDEFINED)
 
     border_idx = [i for i, t in enumerate(refined) if t == TypeEdge.BORDER]
     if len(border_idx) > 2:
-        # keep only the two geometrically flattest sides as borders
         border_idx = sorted(border_idx, key=lambda i: metrics[i]["norm_dev"])
         keep = set(border_idx[:2])
         for i in range(len(refined)):
             if refined[i] == TypeEdge.BORDER and i not in keep:
-                signed_mean = metrics[i]["signed_mean"]
-                interior_sign = 1.0 if orientation > 0 else -1.0
-                refined[i] = TypeEdge.HOLE if signed_mean * interior_sign > 0 else TypeEdge.HEAD
+                refined[i] = TypeEdge.UNDEFINED
 
-    # If everything ended up undefined somehow, recover a little by trusting the
-    # flattest edge as a border when it is much flatter than the others.
-    border_idx = [i for i, t in enumerate(refined) if t == TypeEdge.BORDER]
     if len(border_idx) == 0 and len(metrics) == 4:
         ordered = sorted(range(4), key=lambda i: metrics[i]["norm_dev"])
-        if metrics[ordered[0]]["norm_dev"] < 0.65 * metrics[ordered[1]]["norm_dev"]:
+        if metrics[ordered[0]]["norm_dev"] < 0.60 * metrics[ordered[1]]["norm_dev"]:
             refined[ordered[0]] = TypeEdge.BORDER
 
     return refined
@@ -636,8 +811,11 @@ def my_find_corner_signature(cnt, green=False):
     if best_fit is None or best_offset is None or len(types_pieces) == 0:
         return fallback_find_corner_signature(cnt)
 
-    # Back to original contour indexing
+    # Back to original contour indexing and refine the 4 corners geometrically.
     best_fit_tmp = np.sort((best_fit - best_offset).astype(int))
+    refined_corner_idx = refine_corner_indices(cnt, best_fit_tmp)
+    if refined_corner_idx is not None and len(refined_corner_idx) == 4:
+        best_fit_tmp = refined_corner_idx
 
     edges = split_contour_by_corner_indices(cnt, best_fit_tmp)
     if edges is None or len(edges) != 4:

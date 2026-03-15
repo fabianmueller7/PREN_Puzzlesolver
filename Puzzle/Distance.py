@@ -159,49 +159,17 @@ def diff_match_edges2(e1, e2, reverse=True, thres=5, pad=False):
                 else pad_length + 1
             ),
         )
-
-        # Pad the shortest with 0
         e2 = np.lib.pad(
             e2, ((pad_left, pad_right), (0, 0)), "constant", constant_values=(0, 0)
         )
     else:
-        # No padding just cut longest to match shortest length
         e1 = e1[: e2.shape[0]]
-
-    #if reverse:
-        #e2 = np.flip(e2, 0)
-    #d = np.linalg.norm(e1 - e2, axis=1)
-    #return np.sum(d > thres) / e1.shape[0]
 
     if reverse:
         e2 = np.flip(e2, 0)
 
-    # 🔁 Kontinuierliche 360°-Rotationsprüfung
-    best_score = float("inf")
-    best_angle = 0
-
-    # Prüfe alle Winkel von 0° bis 359° (1°-Schritte)
-    for angle in range(0, 360):
-        # Rotationsmatrix um den Ursprung (0,0)
-        M = cv2.getRotationMatrix2D((0, 0), angle, 1.0)
-        e2_rot = cv2.transform(np.array([e2]), M)[0]
-
-        # Euklidische Distanz zwischen den Kantenpunkten berechnen
-        d = np.linalg.norm(e1 - e2_rot, axis=1)
-        score = np.sum(d > thres) / e1.shape[0]
-
-        # Besten Score und zugehörigen Winkel merken
-        if score < best_score:
-            best_score = score
-            best_angle = angle
-
-    # 🔹 optional: besten Winkel im Edge-Objekt speichern
-    try:
-        e2.rotation_angle = best_angle
-    except Exception:
-        pass
-
-    return best_score, best_angle
+    d = np.linalg.norm(e1 - e2, axis=1)
+    return np.sum(d > thres) / max(e1.shape[0], 1), 0
 
 
 @njit(cache=True)
@@ -258,41 +226,21 @@ def get_colors(edge):
 
 
 def real_edge_compute(e1, e2):
-    """
-    Geometry-first distance for real puzzle pieces.
-
-    Important: `stick_pieces(...)` already aligns the candidate piece to the
-    block edge before this function is called. Therefore we should compare the
-    two edge curves *in that aligned coordinate system*.
-
-    The previous implementation subtracted the mean of both curves and thereby
-    destroyed the placement information created by `stick_pieces`, which made
-    many incompatible edges look artificially similar.
-    """
-
-    if not have_edges_similar_length(
-        e1.shape[0], e1.shape[-1], e2.shape[0], e2.shape[-1], 0.20
-    ):
-        return float("inf")
-
-    return _edge_geom_distance_aligned(e1, e2)
+    return _edge_match_score(e1, e2)
 
 
 def generated_edge_compute(e1, e2):
-    """
-    Same scoring logic for generated puzzles.
-    """
-
-    if not have_edges_similar_length(
-        e1.shape[0], e1.shape[-1], e2.shape[0], e2.shape[-1], 0.20
-    ):
-        return float("inf")
-
-    return _edge_geom_distance_aligned(e1, e2)
+    return _edge_match_score(e1, e2)
 
 
-def _resample_curve(points, n_points=96):
-    """Resample a 2D polyline to a fixed number of points along arc length."""
+def _polyline_length(points):
+    pts = np.asarray(points, dtype=np.float32)
+    if len(pts) < 2:
+        return 0.0
+    return float(np.sum(np.linalg.norm(np.diff(pts, axis=0), axis=1)))
+
+
+def _resample_curve(points, n_points=128):
     pts = np.asarray(points, dtype=np.float32)
     if len(pts) == 0:
         return np.zeros((n_points, 2), dtype=np.float32)
@@ -315,70 +263,121 @@ def _resample_curve(points, n_points=96):
         if j + 1 >= len(pts):
             out[i] = pts[-1]
         else:
-            denom = (s[j + 1] - s[j])
+            denom = s[j + 1] - s[j]
             alpha = 0.0 if denom <= 1e-8 else (tt - s[j]) / denom
             out[i] = pts[j] + alpha * (pts[j + 1] - pts[j])
     return out
 
 
-def _curve_distance_with_small_shift(c1, c2, max_shift=6):
-    """
-    Compare two already-aligned curves while allowing a tiny index shift.
-    This makes the score less sensitive to imperfect corner splitting.
-    """
-    best = float("inf")
-    n = len(c1)
-    for shift in range(-max_shift, max_shift + 1):
-        if shift >= 0:
-            a1, b1 = 0, n - shift
-            a2, b2 = shift, n
-        else:
-            a1, b1 = -shift, n
-            a2, b2 = 0, n + shift
-        if b1 - a1 < max(8, n // 3):
-            continue
-        d = np.linalg.norm(c1[a1:b1] - c2[a2:b2], axis=1).mean()
-        if d < best:
-            best = d
-    return best
+def _signed_profile(points, n_points=128):
+    curve = _resample_curve(points, n_points=n_points)
+    start = curve[0]
+    end = curve[-1]
+    chord_vec = end - start
+    chord = float(np.linalg.norm(chord_vec))
+    if chord <= 1e-8:
+        return curve, np.zeros(n_points, dtype=np.float32), np.zeros(n_points, dtype=np.float32), 0.0
+
+    tangent = chord_vec / chord
+    rel = curve - start
+    tangential = rel @ tangent
+    normal = np.array([-tangent[1], tangent[0]], dtype=np.float32)
+    signed = rel @ normal
+    return curve, tangential, signed, chord
 
 
-def _edge_geom_distance_aligned(e1, e2, n_points=96):
-    """
-    Distance between two edges *after* they were aligned by stick_pieces().
+def _trim_slice(n, trim_ratio=0.12):
+    trim = int(round(n * trim_ratio))
+    trim = min(trim, max(0, n // 3 - 1))
+    return slice(trim, max(trim + 1, n - trim))
 
-    We compare the block edge with the reversed candidate edge in absolute
-    coordinates. No centering, no free rotation.
-    """
+
+def _same_sign_penalty(p1, p2):
+    prod = p1 * p2
+    return float(np.mean(np.maximum(prod, 0.0)))
+
+
+def _profile_feature_scale(profile1, profile2):
+    s1 = float(np.max(np.abs(profile1))) if len(profile1) else 0.0
+    s2 = float(np.max(np.abs(profile2))) if len(profile2) else 0.0
+    return max((s1 + s2) * 0.5, 1.0)
+
+
+def _compatible_length(e1, e2):
     pts1 = np.asarray(e1.shape, dtype=np.float32)
     pts2 = np.asarray(e2.shape, dtype=np.float32)
+    if len(pts1) < 2 or len(pts2) < 2:
+        return False
 
+    c1 = float(np.linalg.norm(pts1[-1] - pts1[0]))
+    c2 = float(np.linalg.norm(pts2[-1] - pts2[0]))
+    a1 = _polyline_length(pts1)
+    a2 = _polyline_length(pts2)
+
+    chord_ratio = min(c1, c2) / max(max(c1, c2), 1.0)
+    arc_ratio = min(a1, a2) / max(max(a1, a2), 1.0)
+    return chord_ratio >= 0.55 and arc_ratio >= 0.45
+
+
+def _edge_match_score(e1, e2, n_points=128):
+    """
+    Robust edge score for already aligned edges.
+
+    `stick_pieces(...)` has already translated/rotated the candidate piece, so this
+    function must *not* re-center or freely re-rotate edges. We compare the two
+    curves as they are and prefer complementary profiles (tab vs hole).
+    """
+    if not _compatible_length(e1, e2):
+        return float("inf")
+
+    pts1 = np.asarray(e1.shape, dtype=np.float32)
+    pts2 = np.asarray(e2.shape, dtype=np.float32)
     if len(pts1) < 2 or len(pts2) < 2:
         return float("inf")
 
-    c1 = _resample_curve(pts1, n_points=n_points)
-    c2 = _resample_curve(pts2, n_points=n_points)[::-1]
+    c1, t1, p1, chord1 = _signed_profile(pts1, n_points=n_points)
+    c2, t2, p2, chord2 = _signed_profile(pts2[::-1], n_points=n_points)
 
-    # Main fit error in aligned coordinates
-    fit_err = _curve_distance_with_small_shift(c1, c2, max_shift=6)
+    keep = _trim_slice(n_points, trim_ratio=0.14)
+    p1k = p1[keep]
+    p2k = p2[keep]
+    t1k = t1[keep]
+    t2k = t2[keep]
+    c1k = c1[keep]
+    c2k = c2[keep]
 
-    # Normalize by the average chord length so the score stays comparable
-    chord1 = np.linalg.norm(c1[0] - c1[-1])
-    chord2 = np.linalg.norm(c2[0] - c2[-1])
     scale = max((chord1 + chord2) * 0.5, 1.0)
+    feature_scale = _profile_feature_scale(p1k, p2k)
 
-    # Small endpoint penalty: good matches should meet at both corners
+    # Complementary edges should mirror around the baseline.
+    complement_err = float(np.mean(np.abs(p1k + p2k))) / feature_scale
+
+    # Same-sign shapes (hole-hole / head-head) create a large positive product.
+    same_sign_penalty = _same_sign_penalty(p1k, p2k) / (feature_scale ** 2)
+
+    # Small tangential mismatch is tolerated, but strong drift means bad corner split.
+    tangent_err = float(np.mean(np.abs(t1k - t2k))) / scale
+
+    # Absolute aligned fit still matters, but only on the trimmed interior.
+    fit_err = float(np.mean(np.linalg.norm(c1k - c2k, axis=1))) / scale
+
     endpoint_err = 0.5 * (
         np.linalg.norm(c1[0] - c2[0]) + np.linalg.norm(c1[-1] - c2[-1])
-    )
+    ) / scale
 
-    # Optional colour tie-breaker if available and populated
     color_err = 0.0
     try:
-        if getattr(e1, 'color', None) is not None and getattr(e2, 'color', None) is not None:
+        if getattr(e1, "color", None) is not None and getattr(e2, "color", None) is not None:
             if len(e1.color) > 0 and len(e2.color) > 0:
                 color_err = euclidean_distance(get_colors(e1), get_colors(e2)) / max(len(e1.color), len(e2.color), 1)
     except Exception:
         color_err = 0.0
 
-    return (fit_err / scale) + 0.35 * (endpoint_err / scale) + 0.015 * color_err
+    return (
+        2.8 * complement_err
+        + 4.5 * same_sign_penalty
+        + 0.9 * fit_err
+        + 0.35 * tangent_err
+        + 0.25 * endpoint_err
+        + 0.01 * color_err
+    )
