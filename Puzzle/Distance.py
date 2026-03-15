@@ -259,71 +259,96 @@ def get_colors(edge):
 
 def real_edge_compute(e1, e2):
     """
-    Geometry-only distance between two edges (for 'real' puzzle).
-    Uses only shape, ignores colors completely.
+    Geometry-first distance for real puzzle pieces.
+
+    Important: `stick_pieces(...)` already aligns the candidate piece to the
+    block edge before this function is called. Therefore we should compare the
+    two edge curves *in that aligned coordinate system*.
+
+    The previous implementation subtracted the mean of both curves and thereby
+    destroyed the placement information created by `stick_pieces`, which made
+    many incompatible edges look artificially similar.
     """
 
-    # Optional quick check: reject edges whose lengths differ too much
     if not have_edges_similar_length(
-            e1.shape[0], e1.shape[-1], e2.shape[0], e2.shape[-1], 0.20
+        e1.shape[0], e1.shape[-1], e2.shape[0], e2.shape[-1], 0.20
     ):
         return float("inf")
 
-    return _edge_geom_distance(e1, e2)
+    return _edge_geom_distance_aligned(e1, e2)
 
 
 def generated_edge_compute(e1, e2):
     """
-    Geometry-only distance between two edges (for generated puzzles).
-    Same logic as real_edge_compute so behaviour is consistent.
+    Same scoring logic for generated puzzles.
     """
 
     if not have_edges_similar_length(
-            e1.shape[0], e1.shape[-1], e2.shape[0], e2.shape[-1], 0.20
+        e1.shape[0], e1.shape[-1], e2.shape[0], e2.shape[-1], 0.20
     ):
         return float("inf")
 
-    return _edge_geom_distance(e1, e2)
+    return _edge_geom_distance_aligned(e1, e2)
 
-def _resample_curve(points, n_points=100):
-    """
-    Resample a sequence of 2D points to exactly n_points along its arc length.
-    points: (N, 2) array-like
-    """
+
+def _resample_curve(points, n_points=96):
+    """Resample a 2D polyline to a fixed number of points along arc length."""
     pts = np.asarray(points, dtype=np.float32)
-    if len(pts) < 2:
+    if len(pts) == 0:
+        return np.zeros((n_points, 2), dtype=np.float32)
+    if len(pts) == 1:
         return np.repeat(pts[:1], n_points, axis=0)
 
-    # cumulative arc length
     deltas = np.diff(pts, axis=0)
     seg_len = np.linalg.norm(deltas, axis=1)
-    s = np.concatenate([[0], np.cumsum(seg_len)])
-    total = s[-1]
-    if total == 0:
+    s = np.concatenate([[0.0], np.cumsum(seg_len)])
+    total = float(s[-1])
+    if total <= 1e-8:
         return np.repeat(pts[:1], n_points, axis=0)
 
-    # target positions along the curve
-    t = np.linspace(0, total, n_points)
-
-    resampled = []
+    t = np.linspace(0.0, total, n_points)
+    out = np.empty((n_points, 2), dtype=np.float32)
     j = 0
-    for tt in t:
+    for i, tt in enumerate(t):
         while j + 1 < len(s) and s[j + 1] < tt:
             j += 1
         if j + 1 >= len(pts):
-            resampled.append(pts[-1])
+            out[i] = pts[-1]
         else:
-            ratio = (tt - s[j]) / (s[j + 1] - s[j] + 1e-8)
-            resampled.append(pts[j] + ratio * (pts[j + 1] - pts[j]))
-    return np.asarray(resampled, dtype=np.float32)
+            denom = (s[j + 1] - s[j])
+            alpha = 0.0 if denom <= 1e-8 else (tt - s[j]) / denom
+            out[i] = pts[j] + alpha * (pts[j + 1] - pts[j])
+    return out
 
 
-def _edge_geom_distance(e1, e2, n_points=100):
+def _curve_distance_with_small_shift(c1, c2, max_shift=6):
     """
-    Purely geometric distance between two Edge objects.
-    Uses only edge.shape, ignores any color.
+    Compare two already-aligned curves while allowing a tiny index shift.
+    This makes the score less sensitive to imperfect corner splitting.
+    """
+    best = float("inf")
+    n = len(c1)
+    for shift in range(-max_shift, max_shift + 1):
+        if shift >= 0:
+            a1, b1 = 0, n - shift
+            a2, b2 = shift, n
+        else:
+            a1, b1 = -shift, n
+            a2, b2 = 0, n + shift
+        if b1 - a1 < max(8, n // 3):
+            continue
+        d = np.linalg.norm(c1[a1:b1] - c2[a2:b2], axis=1).mean()
+        if d < best:
+            best = d
+    return best
 
-    Returns a single float: smaller = more similar.
+
+def _edge_geom_distance_aligned(e1, e2, n_points=96):
+    """
+    Distance between two edges *after* they were aligned by stick_pieces().
+
+    We compare the block edge with the reversed candidate edge in absolute
+    coordinates. No centering, no free rotation.
     """
     pts1 = np.asarray(e1.shape, dtype=np.float32)
     pts2 = np.asarray(e2.shape, dtype=np.float32)
@@ -331,18 +356,29 @@ def _edge_geom_distance(e1, e2, n_points=100):
     if len(pts1) < 2 or len(pts2) < 2:
         return float("inf")
 
-    # Make shapes translation-invariant
-    pts1 = pts1 - pts1.mean(axis=0, keepdims=True)
-    pts2 = pts2 - pts2.mean(axis=0, keepdims=True)
-
-    # Resample both curves to same length
     c1 = _resample_curve(pts1, n_points=n_points)
-    c2 = _resample_curve(pts2, n_points=n_points)
+    c2 = _resample_curve(pts2, n_points=n_points)[::-1]
 
-    # Direct direction
-    d1 = np.linalg.norm(c1 - c2, axis=1).mean()
+    # Main fit error in aligned coordinates
+    fit_err = _curve_distance_with_small_shift(c1, c2, max_shift=6)
 
-    # Flipped direction (reverse one edge)
-    d2 = np.linalg.norm(c1 - c2[::-1], axis=1).mean()
+    # Normalize by the average chord length so the score stays comparable
+    chord1 = np.linalg.norm(c1[0] - c1[-1])
+    chord2 = np.linalg.norm(c2[0] - c2[-1])
+    scale = max((chord1 + chord2) * 0.5, 1.0)
 
-    return min(d1, d2)
+    # Small endpoint penalty: good matches should meet at both corners
+    endpoint_err = 0.5 * (
+        np.linalg.norm(c1[0] - c2[0]) + np.linalg.norm(c1[-1] - c2[-1])
+    )
+
+    # Optional colour tie-breaker if available and populated
+    color_err = 0.0
+    try:
+        if getattr(e1, 'color', None) is not None and getattr(e2, 'color', None) is not None:
+            if len(e1.color) > 0 and len(e2.color) > 0:
+                color_err = euclidean_distance(get_colors(e1), get_colors(e2)) / max(len(e1.color), len(e2.color), 1)
+    except Exception:
+        color_err = 0.0
+
+    return (fit_err / scale) + 0.35 * (endpoint_err / scale) + 0.015 * color_err
