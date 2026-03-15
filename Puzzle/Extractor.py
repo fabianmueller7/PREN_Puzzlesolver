@@ -2,13 +2,10 @@ import os
 
 import cv2
 import numpy as np
+import config
 
 from Img.GreenScreen import remove_background
 from Img.filters import export_contours_without_colormatching
-
-
-PREPROCESS_DEBUG_MODE = 0  # set to 1 if you want debug images on disk
-
 
 def show_image(img, name="image"):
     """Helper for quick visual debugging (only used if PREPROCESS_DEBUG_MODE == 1)."""
@@ -88,7 +85,7 @@ class Extractor:
             self._basic_morphology()
             backup_bw = self.img_bw.copy()
 
-        if PREPROCESS_DEBUG_MODE:
+        if config.DEBUG_MODE == 1:
             show_image(self.img_bw, "final_bw_before_fallback")
 
         # 2) contours from current mask
@@ -121,7 +118,7 @@ class Extractor:
                 os.path.join(self.temp_dir, "binarized_threshold_final.png"),
             )
 
-        if PREPROCESS_DEBUG_MODE:
+        if config.DEBUG_MODE == 1:
             debug = np.zeros_like(self.img_bw)
             cv2.drawContours(debug, contours, -1, 255, 1)
             self._save_temp("contours_debug.png", debug)
@@ -189,7 +186,7 @@ class Extractor:
         bw = cv2.morphologyEx(bw, cv2.MORPH_CLOSE, kernel, iterations=1)
         bw = cv2.morphologyEx(bw, cv2.MORPH_OPEN, kernel, iterations=1)
 
-        if PREPROCESS_DEBUG_MODE:
+        if config.DEBUG_MODE == 1:
             self._save_temp("fallback_bw.png", bw)
 
         return bw
