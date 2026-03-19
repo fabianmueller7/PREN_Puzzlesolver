@@ -647,6 +647,33 @@ class Puzzle:
                             border_img[x, y, 1] = rgb[1]
                             border_img[x, y, 2] = rgb[0]
 
+                # Draw color legend
+                # Colors are in BGR (OpenCV convention) to match what's drawn in border_img
+                legend = [
+                    ((0, 255, 0),     "BORDER (flat edge)"),
+                    ((255, 178, 102), "HOLE (indentation)"),
+                    ((102, 255, 255), "HEAD (protrusion)"),
+                    ((0, 0, 255),     "UNDEFINED"),
+                ]
+                box_size = 16
+                padding = 6
+                font = cv2.FONT_HERSHEY_SIMPLEX
+                font_scale = 0.45
+                font_thickness = 1
+                line_h = box_size + padding
+                legend_h = len(legend) * line_h + padding
+                legend_w = 210
+                lx, ly = 10, 10
+                cv2.rectangle(border_img, (lx - 2, ly - 2),
+                              (lx + legend_w, ly + legend_h), (40, 40, 40), -1)
+                for i, (color, label) in enumerate(legend):
+                    y0 = ly + padding + i * line_h
+                    cv2.rectangle(border_img, (lx + 4, y0),
+                                  (lx + 4 + box_size, y0 + box_size), color, -1)
+                    cv2.putText(border_img, label,
+                                (lx + 4 + box_size + 6, y0 + box_size - 3),
+                                font, font_scale, (220, 220, 220), font_thickness, cv2.LINE_AA)
+
                 cv2.imwrite(path_contour, border_img)
 
                 if config.DEBUG_SHOW_DIAGRAMS == 1:
