@@ -31,12 +31,24 @@ def stick_pieces(bloc_e, p, e, final_stick=False):
         for i, point in enumerate(edge.shape):
             edge.shape[i] = rotate(point, -angle, bloc_e.shape[0])
 
+    # Distribute any residual edge-length mismatch symmetrically at both corners.
+    # After the above alignment, e.shape[-1] == bloc_e.shape[0] (by construction)
+    # but e.shape[0] may not reach bloc_e.shape[-1] if the edges differ in length.
+    # Applying half the gap as a correction centres the error at both endpoints.
+    # Round to int: edge shapes must stay integer-typed so that placed edges used
+    # as block edges in subsequent compute_diffs calls produce an integer translation
+    # (numpy 2.x rejects float+=int / int+=float in-place upcasts).
+    gap = np.subtract(bloc_e.shape[-1], e.shape[0])
+    correction_int = np.round(gap / 2.0).astype(int)
+    for edge in p.edges_:
+        edge.shape = edge.shape + correction_int
+
     if final_stick:
         # Rotation origin
         b_e0, b_e1 = bloc_e.shape[0][0], bloc_e.shape[0][1]
 
-        # Translate piece pixels to desired location
-        p.translate(translation[1], translation[0])
+        total_t = np.add(translation, correction_int)
+        p.translate(int(total_t[1]), int(total_t[0]))
 
         # Bounding boxes of origin/target space
         minX, minY, maxX, maxY = p.get_bbox()

@@ -262,19 +262,22 @@ def peaks_inside(comb, peaks):
     return [peak for peak in peaks if peak > comb[0] and peak < comb[-1]]
 
 
-def is_pattern(comb, peaks):
+def is_pattern(comb, peaks, strict=True):
     """
     Check if the peaks formed an outdent or an indent pattern
 
     :param comb: Tuple of coordinates
     :param peaks: List of peaks
+    :param strict: If True, only 0/2/3 peaks allowed; if False, 0/1/2/3 peaks allowed
     :return: Int
     """
     cpt = len(peaks_inside(comb, peaks))
-    return cpt == 0 or cpt == 2 or cpt == 3
+    if strict:
+        return cpt == 0 or cpt == 2 or cpt == 3
+    return cpt == 0 or cpt == 1 or cpt == 2 or cpt == 3
 
 
-def is_acceptable_comb(combs, peaks, length):
+def is_acceptable_comb(combs, peaks, length, strict=True):
     """
     Check if a combination is composed of acceptable patterns.
     Used to filter the obviously bad combinations quickly.
@@ -282,6 +285,7 @@ def is_acceptable_comb(combs, peaks, length):
     :param comb: Tuple of coordinates
     :param peaks: List of peaks
     :param length: Length of the signature (used for offset computation)
+    :param strict: Passed through to is_pattern; False allows count=1 segments
     :return: Boolean
     """
 
@@ -289,10 +293,10 @@ def is_acceptable_comb(combs, peaks, length):
     combs_tmp = combs + offset
     peaks_tmp = (peaks + offset) % length
     return (
-        is_pattern([0, combs_tmp[0]], peaks_tmp)
-        and is_pattern([combs_tmp[0], combs_tmp[1]], peaks_tmp)
-        and is_pattern([combs_tmp[1], combs_tmp[2]], peaks_tmp)
-        and is_pattern([combs_tmp[2], combs_tmp[3]], peaks_tmp)
+        is_pattern([0, combs_tmp[0]], peaks_tmp, strict)
+        and is_pattern([combs_tmp[0], combs_tmp[1]], peaks_tmp, strict)
+        and is_pattern([combs_tmp[1], combs_tmp[2]], peaks_tmp, strict)
+        and is_pattern([combs_tmp[2], combs_tmp[3]], peaks_tmp, strict)
     )
 
 
@@ -421,6 +425,11 @@ def my_find_corner_signature(cnt, green=False):
         OFFSET_LOW = len(relative_angles) / 8
         OFFSET_HIGH = len(relative_angles) / 2.0
 
+        # Use strict peak-count rules only for low sigma; high sigma is a last-resort
+        # fallback for imperfect (e.g. paper-cutout) pieces where a stray peak can
+        # land alone in one segment and block all candidates.
+        strict = (sigma < 10)
+
         passed_length = 0
         passed_comb = 0
         for comb in combs_l:
@@ -439,8 +448,8 @@ def my_find_corner_signature(cnt, green=False):
             ):
                 passed_length += 1
                 candidate = (comb[3], comb[2], comb[1], comb[0])
-                if is_acceptable_comb(candidate, extr, len(relative_angles)) and is_acceptable_comb(
-                        candidate, extr_inverse, len(relative_angles)
+                if is_acceptable_comb(candidate, extr, len(relative_angles), strict) and is_acceptable_comb(
+                        candidate, extr_inverse, len(relative_angles), strict
                 ):
                     passed_comb += 1
                     tmp_combs_final.append(candidate)
@@ -497,8 +506,21 @@ def my_find_corner_signature(cnt, green=False):
         print("UNDEFINED FOUND - try to continue but something bad happened :(")
         print(types_pieces[-1])
 
-    # Back to original contour indexing
-    best_fit_tmp = (best_fit - best_offset).astype(int)
+    # Back to original contour indexing — then refine each corner using a
+    # lightly-smoothed (sigma=2) angle curve so the peak is closer to the true
+    # geometric corner and both matching edges end up with consistent lengths.
+    _refined_angles = get_relative_angles(
+        np.array(cnt_convert), export=False, sigma=2
+    )
+    _refine_win = max(int(sigma * 1.5), 5)
+    _coarse = (best_fit - best_offset).tolist()
+    _refined = []
+    for _k in range(4):
+        _orig = _coarse[_k]
+        _i0 = max(0, _orig - _refine_win)
+        _i1 = min(len(_refined_angles) - 1, _orig + _refine_win)
+        _refined.append(int(_i0 + np.argmax(_refined_angles[_i0 : _i1 + 1])))
+    best_fit_tmp = np.array(_refined, dtype=int)
 
     for i in range(3):
         edges.append(cnt[best_fit_tmp[i] : best_fit_tmp[i + 1]])

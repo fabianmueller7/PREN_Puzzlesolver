@@ -1,8 +1,11 @@
 import math
 import cv2
+import scipy.ndimage
 
 import numpy as np
 from numba import njit
+
+from .Enums import TypeEdge
 
 
 @njit(cache=True)
@@ -257,33 +260,102 @@ def get_colors(edge):
     ]
 
 
-def real_edge_compute(e1, e2):
-    """
-    Geometry-only distance between two edges (for 'real' puzzle).
-    Uses only shape, ignores colors completely.
-    """
+def _arc_length(pts):
+    """Total arc length of a point sequence."""
+    p = np.asarray(pts, dtype=np.float32)
+    if len(p) < 2:
+        return 0.0
+    return float(np.sum(np.linalg.norm(np.diff(p, axis=0), axis=1)))
 
-    # Optional quick check: reject edges whose lengths differ too much
-    if not have_edges_similar_length(
-            e1.shape[0], e1.shape[-1], e2.shape[0], e2.shape[-1], 0.20
-    ):
+
+def _edge_curvature_profile(pts, sigma=2, n_points=50):
+    """
+    Arc-length-resampled angle-change (curvature) profile of an edge.
+    Returns array of length n_points, or None if edge is too short.
+    """
+    p = np.asarray(pts, dtype=np.float32)
+    if len(p) < 3:
+        return None
+
+    # Segment direction angles
+    deltas = np.diff(p, axis=0)                          # (N-1, 2)
+    angles  = np.arctan2(-deltas[:, 1], deltas[:, 0])   # (N-1,)
+    angles  = np.unwrap(angles)
+
+    # Curvature = angle change between consecutive segments
+    curvature = np.diff(angles)                          # (N-2,)
+
+    # Arc-length positions for curvature values (midpoints of three consecutive pts)
+    seg_lens = np.linalg.norm(deltas, axis=1)            # (N-1,)
+    arc_s    = np.concatenate([[0.0], np.cumsum(seg_lens)])
+    total    = arc_s[-1]
+    if total < 1e-6:
+        return None
+    curv_pos = (arc_s[:-2] + arc_s[1:-1] + arc_s[2:]) / 3.0  # (N-2,)
+
+    # Resample to n_points equally spaced in arc length
+    t        = np.linspace(0.0, total, n_points)
+    resampled = np.interp(t, curv_pos, curvature, left=0.0, right=0.0)
+
+    # Smooth to suppress per-pixel noise
+    return scipy.ndimage.gaussian_filter(resampled, sigma=sigma)
+
+
+def _edge_curvature_score(e1, e2, n_points=50):
+    """
+    Score how well two edges interlock based on curvature-profile alignment.
+    Lower = better match.
+
+    Physical model: stick_pieces reverses the piece edge when gluing, so a
+    feature at position p in e1 should correspond to a feature at position
+    (1-p) in e2 (= position p in e2[::-1]).  A perfect match satisfies
+    curv_e1 + curv_e2[::-1] ≈ 0 everywhere.
+    """
+    c1 = _edge_curvature_profile(e1.shape, n_points=n_points)
+    c2 = _edge_curvature_profile(e2.shape, n_points=n_points)
+    if c1 is None or c2 is None:
         return float("inf")
 
-    return _edge_geom_distance(e1, e2)
+    return float(np.mean(np.abs(c1 + c2[::-1])))
+
+
+def _type_priority_offset(e1, e2):
+    """
+    Returns a large score penalty for non-ideal type pairings so that
+    priority order HEAD↔HOLE > same-type > UNDEFINED is respected.
+    """
+    t1, t2 = e1.type, e2.type
+    complementary = (
+        (t1 == TypeEdge.HOLE  and t2 == TypeEdge.HEAD) or
+        (t1 == TypeEdge.HEAD  and t2 == TypeEdge.HOLE)
+    )
+    if complementary:
+        return 0.0
+    if t1 == TypeEdge.UNDEFINED or t2 == TypeEdge.UNDEFINED:
+        return 2000.0   # last resort
+    return 1000.0       # same-type (possible misclassification)
+
+
+def real_edge_compute(e1, e2):
+    """Match score for a real (photographed) puzzle edge pair."""
+    # 1. Arc-length filter
+    L1 = _arc_length(e1.shape)
+    L2 = _arc_length(e2.shape)
+    if abs(L1 - L2) / max(L1, L2, 1.0) > 0.20:
+        return float("inf")
+
+    # 2. Curvature-profile score + type-priority offset
+    return _edge_curvature_score(e1, e2) + _type_priority_offset(e1, e2)
 
 
 def generated_edge_compute(e1, e2):
-    """
-    Geometry-only distance between two edges (for generated puzzles).
-    Same logic as real_edge_compute so behaviour is consistent.
-    """
-
-    if not have_edges_similar_length(
-            e1.shape[0], e1.shape[-1], e2.shape[0], e2.shape[-1], 0.20
-    ):
+    """Match score for a generated (CAD) puzzle edge pair."""
+    L1 = _arc_length(e1.shape)
+    L2 = _arc_length(e2.shape)
+    if abs(L1 - L2) / max(L1, L2, 1.0) > 0.20:
         return float("inf")
 
-    return _edge_geom_distance(e1, e2)
+    return _edge_curvature_score(e1, e2) + _type_priority_offset(e1, e2)
 
 def _resample_curve(points, n_points=100):
     """

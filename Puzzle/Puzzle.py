@@ -225,13 +225,17 @@ class Puzzle:
             )
             block_best_e, best_e = self.best_diff(
                 self.diff, self.connected_directions, left_pieces)
-                # Winkel vom Edge aufs Piece übertragen
-                
+
+            if block_best_e is None or best_e is None:
+                self.log("No match found — solver cannot continue")
+                break
+
+            # Winkel vom Edge aufs Piece übertragen
             try:
                 self.edge_to_piece[best_e].rotation_angle = getattr(best_e, "rotation_angle", 0)
             except Exception:
                 pass
-            
+
             block_best_p, best_p = (
                 self.edge_to_piece[block_best_e],
                 self.edge_to_piece[best_e],
@@ -463,8 +467,7 @@ class Puzzle:
         return None, None
 
     def add_to_diffs(self, left_pieces):
-        """build the list of edge to test"""
-
+        """Build the list of edge to test."""
         edges_to_test = [
             (piece, edge)
             for piece in left_pieces
@@ -646,6 +649,15 @@ class Puzzle:
                             border_img[x, y, 0] = rgb[2]
                             border_img[x, y, 1] = rgb[1]
                             border_img[x, y, 2] = rgb[0]
+
+                # Draw purple dots at piece corners (where edges meet)
+                for e in piece.edges_:
+                    if len(e.shape) == 0:
+                        continue
+                    ey, ex = e.shape[0]
+                    ix, iy = int(ex) - minX, int(ey) - minY
+                    if 0 <= ix < border_img.shape[0] and 0 <= iy < border_img.shape[1]:
+                        cv2.circle(border_img, (iy, ix), 4, (128, 0, 128), -1)
 
                 # Draw color legend
                 # Colors are in BGR (OpenCV convention) to match what's drawn in border_img
