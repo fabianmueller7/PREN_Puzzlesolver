@@ -271,7 +271,7 @@ def is_pattern(comb, peaks):
     :return: Int
     """
     cpt = len(peaks_inside(comb, peaks))
-    return cpt == 0 or cpt == 1 or cpt == 2 or cpt == 3
+    return cpt == 0 or cpt == 2 or cpt == 3
 
 
 def is_acceptable_comb(combs, peaks, length):
@@ -357,18 +357,14 @@ def my_find_corner_signature(cnt, green=False):
         relative_angles = np.array(relative_angles)
         relative_angles_inverse = -np.array(relative_angles)
 
-        # Minimum peak distance: filters out noise spikes while preserving
-        # corner peaks (~len/4 apart) and tab feature peaks (~len/20 apart)
-        mpd = max(1, len(relative_angles) // 30)
-
         # Positive peaks
         max_rel = np.max(relative_angles) if len(relative_angles) > 0 else 0
-        extr_tmp = detect_peaks(relative_angles, mph=0.3 * max_rel, mpd=mpd) if max_rel > 0 else np.array([], dtype=int)
+        extr_tmp = detect_peaks(relative_angles, mph=0.3 * max_rel) if max_rel > 0 else np.array([], dtype=int)
 
         relative_angles = np.roll(relative_angles, int(len(relative_angles) / 2))
         max_rel_rolled = max(relative_angles) if len(relative_angles) > 0 else 0
         extra_peaks = (
-            detect_peaks(relative_angles, mph=0.3 * max_rel_rolled, mpd=mpd)
+            detect_peaks(relative_angles, mph=0.3 * max_rel_rolled)
             if max_rel_rolled > 0
             else np.array([], dtype=int)
         )
@@ -383,7 +379,7 @@ def my_find_corner_signature(cnt, green=False):
         # Negative peaks
         max_rel_inv = np.max(relative_angles_inverse) if len(relative_angles_inverse) > 0 else 0
         extr_tmp_inverse = (
-            detect_peaks(relative_angles_inverse, mph=0.3 * max_rel_inv, mpd=mpd)
+            detect_peaks(relative_angles_inverse, mph=0.3 * max_rel_inv)
             if max_rel_inv > 0
             else np.array([], dtype=int)
         )
@@ -393,7 +389,7 @@ def my_find_corner_signature(cnt, green=False):
         )
         max_rel_inv_rolled = max(relative_angles_inverse) if len(relative_angles_inverse) > 0 else 0
         extra_peaks_inv = (
-            detect_peaks(relative_angles_inverse, mph=0.3 * max_rel_inv_rolled, mpd=mpd)
+            detect_peaks(relative_angles_inverse, mph=0.3 * max_rel_inv_rolled)
             if max_rel_inv_rolled > 0
             else np.array([], dtype=int)
         )
