@@ -624,7 +624,7 @@ class Puzzle:
             # ------------------------------------------------------
 
 
-            if config.DEBUG_MODE == 1:
+            if config.DEBUG_FILE_OUTPUT == 1:
                 # Contours
                 for e in piece.edges_:
                     for y, x in e.shape:
@@ -649,7 +649,7 @@ class Puzzle:
 
                 cv2.imwrite(path_contour, border_img)
 
-                if config.DEBUG_MODE == 1:
+                if config.DEBUG_SHOW_DIAGRAMS == 1:
                     show_image(border_img,"contour category image")
 
             cv2.imwrite(path_colored, colored_img)

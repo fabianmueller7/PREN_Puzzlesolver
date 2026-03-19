@@ -271,7 +271,7 @@ def is_pattern(comb, peaks):
     :return: Int
     """
     cpt = len(peaks_inside(comb, peaks))
-    return cpt == 0 or cpt == 2 or cpt == 3
+    return cpt == 0 or cpt == 1 or cpt == 2 or cpt == 3
 
 
 def is_acceptable_comb(combs, peaks, length):
@@ -351,7 +351,7 @@ def my_find_corner_signature(cnt, green=False):
         cnt_convert = [c[0] for c in cnt]
         relative_angles = get_relative_angles(
             np.array(cnt_convert),
-            export=(config.DEBUG_MODE == 1),
+            export=(config.DEBUG_FILE_OUTPUT == 1),  # saves fig*.png and save*.p
             sigma=sigma
         )
         relative_angles = np.array(relative_angles)
@@ -425,6 +425,8 @@ def my_find_corner_signature(cnt, green=False):
         OFFSET_LOW = len(relative_angles) / 8
         OFFSET_HIGH = len(relative_angles) / 2.0
 
+        passed_length = 0
+        passed_comb = 0
         for comb in combs_l:
             if (
                     (comb[0] > comb[1])
@@ -439,14 +441,16 @@ def my_find_corner_signature(cnt, green=False):
                     and ((comb[3] + (len(relative_angles) - comb[0])) > OFFSET_LOW)
                     and ((comb[3] + (len(relative_angles) - comb[0])) < OFFSET_HIGH)
             ):
+                passed_length += 1
                 candidate = (comb[3], comb[2], comb[1], comb[0])
                 if is_acceptable_comb(candidate, extr, len(relative_angles)) and is_acceptable_comb(
                         candidate, extr_inverse, len(relative_angles)
                 ):
+                    passed_comb += 1
                     tmp_combs_final.append(candidate)
 
         if len(tmp_combs_final) == 0:
-            print(f"  [sigma={sigma}] {len(extr)} peaks found but no valid 4-corner combo (OFFSET_LOW={OFFSET_LOW:.0f}, OFFSET_HIGH={OFFSET_HIGH:.0f}, contour_len={len(relative_angles)})")
+            print(f"  [sigma={sigma}] peaks={len(extr)} passed_length={passed_length} passed_comb={passed_comb} (OFFSET_LOW={OFFSET_LOW:.0f}, peaks_pos={list(extr)})")
             sigma += 1
             continue
 
@@ -543,7 +547,7 @@ def export_contours(
     list_img = []
     out_color = np.zeros_like(img)
 
-    if config.DEBUG_MODE == 1:
+    if config.DEBUG_FILE_OUTPUT == 1:
         signatures = [
             my_find_corner_signature(cnt, green)
             for cnt in contours
@@ -739,7 +743,7 @@ def export_contours_without_colormatching(
 
         return dir_map
 
-    if config.DEBUG_MODE == 1:
+    if config.DEBUG_FILE_OUTPUT == 1:
         signatures = [
             my_find_corner_signature(cnt, green)
             for cnt in contours
