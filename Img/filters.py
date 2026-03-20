@@ -372,6 +372,14 @@ def _rect_fitness(pts):
     return side_pen + angle_pen
 
 
+def _nearest_contour_idx(cnt_pts, target):
+    """
+    Find the index in cnt_pts (Nx2 array) closest to target (2D point).
+    """
+    diffs = cnt_pts.astype(float) - np.array(target, dtype=float)
+    return int(np.argmin(np.linalg.norm(diffs, axis=1)))
+
+
 def my_find_corner_signature(cnt, green=False):
     """
     Determine the corner/edge positions by analyzing contours.
@@ -404,22 +412,60 @@ def my_find_corner_signature(cnt, green=False):
 
     OFFSET_LOW_c = len(coarse_angles_raw) / 8
     OFFSET_HIGH_c = len(coarse_angles_raw) / 2.0
+    SCORE_WEIGHT = 0.5  # weight of corner-confidence penalty vs. geometry
+
+    # Normalize coarse angle scores to [0, 1] for confidence term
+    norm_scores = coarse_angles_raw / (np.max(coarse_angles_raw) + 1e-9)
+
+    def _valid_spacing(sp):
+        gaps = [sp[1] - sp[0], sp[2] - sp[1], sp[3] - sp[2],
+                sp[0] + len(coarse_angles_raw) - sp[3]]
+        return all(OFFSET_LOW_c < g < OFFSET_HIGH_c for g in gaps)
+
+    def _combined_fitness(sp):
+        # Joint score: rectangle geometry + corner confidence
+        rect_f = _rect_fitness(cnt_pts[list(sp)])
+        conf_f = 1.0 - float(np.mean(norm_scores[list(sp)]))
+        return rect_f + SCORE_WEIGHT * conf_f
 
     best_fit_coarse = None
     best_fitness = float('inf')
+    best_strategy = None
+
+    # Strategy 2a: 3 high-confidence anchors → derive 4th from rectangle law
+    # D = A + C - B  (parallelogram law; diagonals bisect each other)
+    for trio in itertools.combinations(candidates, 3):
+        for mid_i in range(3):
+            idxA = trio[(mid_i - 1) % 3]
+            idxB = trio[mid_i]          # the corner between A and C
+            idxC = trio[(mid_i + 1) % 3]
+            A = cnt_pts[idxA].astype(float)
+            B = cnt_pts[idxB].astype(float)
+            C = cnt_pts[idxC].astype(float)
+            D_computed = A + C - B
+            idxD = _nearest_contour_idx(cnt_pts, D_computed)
+            sp = sorted([idxA, idxB, idxC, idxD])
+            if len(set(sp)) < 4 or not _valid_spacing(sp):
+                continue
+            fitness = _combined_fitness(sp)
+            if fitness < best_fitness:
+                best_fitness = fitness
+                best_fit_coarse = np.array(sp, dtype=int)
+                best_strategy = "3-anchor"
+
+    # Strategy 2b: all 4 chosen from top candidates
     for combo in itertools.combinations(candidates, 4):
         sp = sorted(combo)
-        gaps = [sp[1] - sp[0], sp[2] - sp[1], sp[3] - sp[2],
-                sp[0] + len(coarse_angles_raw) - sp[3]]
-        if not all(OFFSET_LOW_c < g < OFFSET_HIGH_c for g in gaps):
+        if not _valid_spacing(sp):
             continue
-        pts = cnt_pts[list(sp)]
-        fitness = _rect_fitness(pts)
+        fitness = _combined_fitness(sp)
         if fitness < best_fitness:
             best_fitness = fitness
             best_fit_coarse = np.array(sp, dtype=int)
+            best_strategy = "4-candidate"
 
     print(f"  [coarse sigma={COARSE_SIGMA}] best_fitness={best_fitness:.3f} "
+          f"strategy={best_strategy} "
           f"-> {'FAST PATH' if best_fitness < FITNESS_THRESHOLD else 'fallback to permutation'}")
 
     if best_fit_coarse is not None and best_fitness < FITNESS_THRESHOLD:
