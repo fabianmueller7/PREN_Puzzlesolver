@@ -309,12 +309,40 @@ def type_peak(peaks_pos_inside, peaks_neg_inside):
     :return: TypeEdge
     """
 
-    if len(peaks_pos_inside) == 0 and len(peaks_neg_inside) == 0:
+    n_pos = len(peaks_pos_inside)
+    n_neg = len(peaks_neg_inside)
+
+    if n_pos == 0 and n_neg == 0:
         return TypeEdge.BORDER
-    if len(peaks_inside(peaks_pos_inside, peaks_neg_inside)) == 2:
+
+    # Strict pattern: exactly 2 of one type sandwiched inside the other.
+    n_neg_inside_pos = len(peaks_inside(peaks_pos_inside, peaks_neg_inside))
+    n_pos_inside_neg = len(peaks_inside(peaks_neg_inside, peaks_pos_inside))
+
+    if n_neg_inside_pos == 2:
         return TypeEdge.HOLE
-    if len(peaks_inside(peaks_neg_inside, peaks_pos_inside)) == 2:
+    if n_pos_inside_neg == 2:
         return TypeEdge.HEAD
+
+    # Lenient fallbacks for complex (e.g. circular/smooth) features where
+    # strict peak counting fails:
+
+    # Only one polarity present → clear direction.
+    if n_pos > 0 and n_neg == 0:
+        return TypeEdge.HEAD
+    if n_neg > 0 and n_pos == 0:
+        return TypeEdge.HOLE
+
+    # More than 4 peaks total → likely a circular feature with many small peaks.
+    # Use majority vote on inner counts.
+    if n_pos + n_neg > 4:
+        if n_neg_inside_pos > n_pos_inside_neg:
+            return TypeEdge.HOLE
+        if n_pos_inside_neg > n_neg_inside_pos:
+            return TypeEdge.HEAD
+        # Tie: more outer-positive than outer-negative → outward bump → HEAD
+        return TypeEdge.HEAD if n_pos >= n_neg else TypeEdge.HOLE
+
     return TypeEdge.UNDEFINED
 
 
@@ -488,10 +516,27 @@ def my_find_corner_signature(cnt, green=False):
                     best_strategy = "post-correction"
                     break  # take first improvement for this corner, move to next
 
+    # Post-correction 2: for each of the 4 found corners, try replacing it with
+    # each unused top candidate directly.  This breaks the "self-consistent wrong
+    # corner" deadlock where D=A+C-B from the other 3 returns the same bad index.
+    if best_fit_coarse is not None:
+        for replace_i in range(4):
+            others = [int(best_fit_coarse[j]) for j in range(4) if j != replace_i]
+            for cand in candidates:
+                if cand in others:
+                    continue
+                new_sp = sorted(others + [cand])
+                if len(set(new_sp)) < 4 or not _valid_spacing(new_sp):
+                    continue
+                new_fitness = _combined_fitness(new_sp)
+                if new_fitness < best_fitness:
+                    best_fitness = new_fitness
+                    best_fit_coarse = np.array(new_sp, dtype=int)
+                    best_strategy = "post-correction-cand"
+
     print(f"  [coarse sigma={COARSE_SIGMA}] best_fitness={best_fitness:.3f} "
           f"strategy={best_strategy} "
           f"-> {'FAST PATH' if best_fitness < FITNESS_THRESHOLD else 'fallback to permutation'}")
-
     if best_fit_coarse is not None and best_fitness < FITNESS_THRESHOLD:
         # Classify edges using sigma=5 angle peaks
         class_angles = get_relative_angles(
@@ -521,7 +566,12 @@ def my_find_corner_signature(cnt, green=False):
             neg_inside = peaks_inside(seg, extr_c_inv)
             pos_inside.sort()
             neg_inside.sort()
-            types_pieces.append(type_peak(pos_inside, neg_inside))
+            t = type_peak(pos_inside, neg_inside)
+            angle_sum = float(np.sum(class_angles[seg[0]:seg[1]]))
+            # Low-sum UNDEFINED: the net angle change is small → likely noisy border edge.
+            if t == TypeEdge.UNDEFINED and abs(angle_sum) < 1.0:
+                t = TypeEdge.BORDER
+            types_pieces.append(t)
 
         # Refine corner positions with sigma=2, wider window since coarse is imprecise
         _refined_angles = get_relative_angles(cnt_pts, export=False, sigma=2)
@@ -541,8 +591,54 @@ def my_find_corner_signature(cnt, green=False):
         )
         edges = [np.array([x[0] for x in e]) for e in edges]
 
-        types_pieces.append(types_pieces[0])
-        return best_fit_tmp, edges, types_pieces[1:]
+        n_borders_fast = sum(1 for t in types_pieces if t == TypeEdge.BORDER)
+        if n_borders_fast > 0:
+            types_pieces.append(types_pieces[0])
+            return best_fit_tmp, edges, types_pieces[1:]
+
+        # 0 border edges at sigma=5 → the border edge may have small noise peaks.
+        # Retry classification at higher sigma where the border edge becomes truly flat.
+        for hi_sigma in [10, 15, 20]:
+            hi_angles = get_relative_angles(cnt_pts, export=False, sigma=hi_sigma)
+            hi_angles = np.array(hi_angles)
+            hi_angles_inv = -hi_angles
+            max_hi = np.max(hi_angles) if len(hi_angles) > 0 else 0
+            extr_hi = detect_peaks(hi_angles, mph=0.3 * max_hi) if max_hi > 0 else np.array([], dtype=int)
+            max_hi_inv = np.max(hi_angles_inv) if len(hi_angles_inv) > 0 else 0
+            extr_hi_inv = detect_peaks(hi_angles_inv, mph=0.3 * max_hi_inv) if max_hi_inv > 0 else np.array([], dtype=int)
+
+            hi_offset = len(hi_angles) - best_fit_coarse[3] - 1
+            hi_rolled = best_fit_coarse + hi_offset
+            extr_hi = (extr_hi + hi_offset) % len(hi_angles)
+            extr_hi_inv = (extr_hi_inv + hi_offset) % len(hi_angles)
+
+            hi_types = []
+            for seg in [
+                [0, hi_rolled[0]],
+                [hi_rolled[0], hi_rolled[1]],
+                [hi_rolled[1], hi_rolled[2]],
+                [hi_rolled[2], hi_rolled[3]],
+            ]:
+                pos_in = peaks_inside(seg, extr_hi)
+                neg_in = peaks_inside(seg, extr_hi_inv)
+                pos_in.sort(); neg_in.sort()
+                t = type_peak(pos_in, neg_in)
+                hi_sum = float(np.sum(hi_angles[seg[0]:seg[1]]))
+                if t == TypeEdge.UNDEFINED and abs(hi_sum) < 1.0:
+                    t = TypeEdge.BORDER
+                hi_types.append(t)
+
+            n_borders_hi = sum(1 for t in hi_types if t == TypeEdge.BORDER)
+            print(f"  [fast path sigma={hi_sigma} retry] borders={n_borders_hi} types={[t.name for t in hi_types]}")
+            if n_borders_hi > 0:
+                types_pieces = hi_types
+                types_pieces.append(types_pieces[0])
+                return best_fit_tmp, edges, types_pieces[1:]
+
+        # Still 0 borders after higher-sigma retries → fall to sigma=5 permutation
+        print(f"  [fast path] 0 borders detected → falling back to sigma=5 permutation")
+        types_pieces.clear()
+        edges.clear()
 
     # -----------------------------------------------------------------------
     # Fallback: original sigma-escalation + permutation search
