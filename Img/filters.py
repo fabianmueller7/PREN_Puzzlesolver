@@ -324,6 +324,54 @@ def normalized(a, axis=-1, order=2):
     return a / np.expand_dims(l2, axis)
 
 
+def _pick_topN_spaced(scores, min_gap, N=8):
+    """
+    Greedy selection of up to N indices from scores with minimum spacing min_gap.
+    Returns indices sorted in ascending order.
+    """
+    result = []
+    blocked = np.zeros(len(scores), dtype=bool)
+    for idx in np.argsort(scores)[::-1]:
+        if not blocked[idx]:
+            result.append(int(idx))
+            lo = max(0, idx - min_gap)
+            hi = min(len(scores), idx + min_gap)
+            blocked[lo:hi] = True
+        if len(result) == N:
+            break
+    return sorted(result)
+
+
+def _rect_fitness(pts):
+    """
+    Measure how well 4 points (in order) form a rectangle.
+    Returns a non-negative score where 0 = perfect rectangle.
+    Two components:
+      - side_penalty: opposite sides should be equal length
+      - angle_penalty: each interior angle should be 90 degrees
+    """
+    def _dist(a, b):
+        return np.linalg.norm(a.astype(float) - b.astype(float))
+
+    def _angle_at(prev, cur, nxt):
+        v1 = prev.astype(float) - cur.astype(float)
+        v2 = nxt.astype(float) - cur.astype(float)
+        cos_val = np.dot(v1, v2) / (np.linalg.norm(v1) * np.linalg.norm(v2) + 1e-9)
+        return np.degrees(np.arccos(np.clip(cos_val, -1.0, 1.0)))
+
+    sides = [_dist(pts[i], pts[(i + 1) % 4]) for i in range(4)]
+    side_pen = (
+        abs(sides[0] - sides[2]) / (sides[0] + sides[2] + 1e-9)
+        + abs(sides[1] - sides[3]) / (sides[1] + sides[3] + 1e-9)
+    )
+    angle_pen = (
+        sum(abs(_angle_at(pts[(i - 1) % 4], pts[i], pts[(i + 1) % 4]) - 90.0)
+            for i in range(4))
+        / 90.0
+    )
+    return side_pen + angle_pen
+
+
 def my_find_corner_signature(cnt, green=False):
     """
     Determine the corner/edge positions by analyzing contours.
@@ -337,6 +385,98 @@ def my_find_corner_signature(cnt, green=False):
     edges = []
     types_pieces = []
 
+    cnt_convert = [c[0] for c in cnt]
+    cnt_pts = np.array(cnt_convert)
+
+    # -----------------------------------------------------------------------
+    # Fast path: high-sigma scoring + rectangle fitness
+    # At very high sigma, tabs/holes smooth away (net angle ≈ 0) while the
+    # 4 real corner turns (~90°) survive as the dominant positive peaks.
+    # We pick the 8 highest-scoring candidate points, try all C(8,4)=70
+    # combinations, and select the one that best fits a rectangle.
+    # -----------------------------------------------------------------------
+    COARSE_SIGMA = 35
+    FITNESS_THRESHOLD = 0.5
+
+    coarse_angles_raw = get_relative_angles(cnt_pts, export=False, sigma=COARSE_SIGMA)
+    min_gap = int(len(coarse_angles_raw) / 8)
+    candidates = _pick_topN_spaced(coarse_angles_raw, min_gap, N=8)
+
+    OFFSET_LOW_c = len(coarse_angles_raw) / 8
+    OFFSET_HIGH_c = len(coarse_angles_raw) / 2.0
+
+    best_fit_coarse = None
+    best_fitness = float('inf')
+    for combo in itertools.combinations(candidates, 4):
+        sp = sorted(combo)
+        gaps = [sp[1] - sp[0], sp[2] - sp[1], sp[3] - sp[2],
+                sp[0] + len(coarse_angles_raw) - sp[3]]
+        if not all(OFFSET_LOW_c < g < OFFSET_HIGH_c for g in gaps):
+            continue
+        pts = cnt_pts[list(sp)]
+        fitness = _rect_fitness(pts)
+        if fitness < best_fitness:
+            best_fitness = fitness
+            best_fit_coarse = np.array(sp, dtype=int)
+
+    print(f"  [coarse sigma={COARSE_SIGMA}] best_fitness={best_fitness:.3f} "
+          f"-> {'FAST PATH' if best_fitness < FITNESS_THRESHOLD else 'fallback to permutation'}")
+
+    if best_fit_coarse is not None and best_fitness < FITNESS_THRESHOLD:
+        # Classify edges using sigma=5 angle peaks
+        class_angles = get_relative_angles(
+            cnt_pts, export=(config.DEBUG_FILE_OUTPUT == 1), sigma=5
+        )
+        class_angles = np.array(class_angles)
+        class_angles_inv = -class_angles
+
+        max_rel = np.max(class_angles) if len(class_angles) > 0 else 0
+        extr_c = detect_peaks(class_angles, mph=0.3 * max_rel) if max_rel > 0 else np.array([], dtype=int)
+        max_rel_inv = np.max(class_angles_inv) if len(class_angles_inv) > 0 else 0
+        extr_c_inv = detect_peaks(class_angles_inv, mph=0.3 * max_rel_inv) if max_rel_inv > 0 else np.array([], dtype=int)
+
+        # Roll so the last corner lands near the end (matches existing logic)
+        best_offset_c = len(class_angles) - best_fit_coarse[3] - 1
+        best_fit_rolled = best_fit_coarse + best_offset_c
+        extr_c = (extr_c + best_offset_c) % len(class_angles)
+        extr_c_inv = (extr_c_inv + best_offset_c) % len(class_angles)
+
+        for seg in [
+            [0, best_fit_rolled[0]],
+            [best_fit_rolled[0], best_fit_rolled[1]],
+            [best_fit_rolled[1], best_fit_rolled[2]],
+            [best_fit_rolled[2], best_fit_rolled[3]],
+        ]:
+            pos_inside = peaks_inside(seg, extr_c)
+            neg_inside = peaks_inside(seg, extr_c_inv)
+            pos_inside.sort()
+            neg_inside.sort()
+            types_pieces.append(type_peak(pos_inside, neg_inside))
+
+        # Refine corner positions with sigma=2, wider window since coarse is imprecise
+        _refined_angles = get_relative_angles(cnt_pts, export=False, sigma=2)
+        _refine_win = max(COARSE_SIGMA, 15)
+        _refined = []
+        for _k in range(4):
+            _orig = int(best_fit_coarse[_k])
+            _i0 = max(0, _orig - _refine_win)
+            _i1 = min(len(_refined_angles) - 1, _orig + _refine_win)
+            _refined.append(int(_i0 + np.argmax(_refined_angles[_i0:_i1 + 1])))
+        best_fit_tmp = np.array(_refined, dtype=int)
+
+        for i in range(3):
+            edges.append(cnt[best_fit_tmp[i]:best_fit_tmp[i + 1]])
+        edges.append(
+            np.concatenate((cnt[best_fit_tmp[3]:], cnt[:best_fit_tmp[0]]), axis=0)
+        )
+        edges = [np.array([x[0] for x in e]) for e in edges]
+
+        types_pieces.append(types_pieces[0])
+        return best_fit_tmp, edges, types_pieces[1:]
+
+    # -----------------------------------------------------------------------
+    # Fallback: original sigma-escalation + permutation search
+    # -----------------------------------------------------------------------
     sigma = 5
     max_sigma = 12
     if not green:
@@ -352,7 +492,6 @@ def my_find_corner_signature(cnt, green=False):
         tmp_combs_final = []
 
         # Find relative angles
-        cnt_convert = [c[0] for c in cnt]
         relative_angles = get_relative_angles(
             np.array(cnt_convert),
             export=(config.DEBUG_FILE_OUTPUT == 1),  # saves fig*.png and save*.p
@@ -576,6 +715,35 @@ def export_contours(
                 my_find_corner_signature, zip(contours, itertools.repeat(green))
             )
 
+    # Cross-piece dimension check: all puzzle pieces should have the same
+    # width and height (within ~30%). An outlier likely has bad corner detection.
+    _dims = []
+    for idx, cnt in enumerate(contours):
+        corners_chk, _, _ = signatures[idx]
+        if corners_chk is None:
+            _dims.append(None)
+            continue
+        pts = np.array([cnt[int(c)][0] for c in corners_chk], dtype=float)
+        sides = [np.linalg.norm(pts[(i + 1) % 4] - pts[i]) for i in range(4)]
+        short = min((sides[0] + sides[2]) / 2, (sides[1] + sides[3]) / 2)
+        long_ = max((sides[0] + sides[2]) / 2, (sides[1] + sides[3]) / 2)
+        _dims.append((short, long_))
+
+    _valid_dims = [d for d in _dims if d is not None]
+    if len(_valid_dims) > 1:
+        med_short = float(np.median([d[0] for d in _valid_dims]))
+        med_long = float(np.median([d[1] for d in _valid_dims]))
+        _DIM_TOL = 0.3
+        for i, d in enumerate(_dims):
+            if d is None:
+                continue
+            short, long_ = d
+            short_err = abs(short - med_short) / (med_short + 1e-9)
+            long_err = abs(long_ - med_long) / (med_long + 1e-9)
+            status = "OUTLIER — corner detection may be wrong" if (short_err > _DIM_TOL or long_err > _DIM_TOL) else "OK"
+            print(f"  [dim-check] Piece {i}: short={short:.0f}px (med {med_short:.0f}), "
+                  f"long={long_:.0f}px (med {med_long:.0f}) — {status}")
+
     for idx, cnt in enumerate(contours):
         corners, edges_shape, types_edges = signatures[idx]
         if corners is None:
@@ -771,6 +939,34 @@ def export_contours_without_colormatching(
             signatures = p.starmap(
                 my_find_corner_signature, zip(contours, itertools.repeat(green))
             )
+
+    # Cross-piece dimension check
+    _dims2 = []
+    for idx, cnt in enumerate(contours):
+        corners_chk, _, _ = signatures[idx]
+        if corners_chk is None:
+            _dims2.append(None)
+            continue
+        pts = np.array([cnt[int(c)][0] for c in corners_chk], dtype=float)
+        sides = [np.linalg.norm(pts[(i + 1) % 4] - pts[i]) for i in range(4)]
+        short = min((sides[0] + sides[2]) / 2, (sides[1] + sides[3]) / 2)
+        long_ = max((sides[0] + sides[2]) / 2, (sides[1] + sides[3]) / 2)
+        _dims2.append((short, long_))
+    _valid_dims2 = [d for d in _dims2 if d is not None]
+    if len(_valid_dims2) > 1:
+        med_short2 = float(np.median([d[0] for d in _valid_dims2]))
+        med_long2 = float(np.median([d[1] for d in _valid_dims2]))
+        _DIM_TOL2 = 0.3
+        for i, d in enumerate(_dims2):
+            if d is None:
+                continue
+            short, long_ = d
+            status = "OUTLIER — corner detection may be wrong" if (
+                abs(short - med_short2) / (med_short2 + 1e-9) > _DIM_TOL2
+                or abs(long_ - med_long2) / (med_long2 + 1e-9) > _DIM_TOL2
+            ) else "OK"
+            print(f"  [dim-check] Piece {i}: short={short:.0f}px (med {med_short2:.0f}), "
+                  f"long={long_:.0f}px (med {med_long2:.0f}) — {status}")
 
     for idx, cnt in enumerate(contours):
         corners, edges_shape, types_edges = signatures[idx]
