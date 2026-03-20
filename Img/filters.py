@@ -404,7 +404,7 @@ def my_find_corner_signature(cnt, green=False):
     # combinations, and select the one that best fits a rectangle.
     # -----------------------------------------------------------------------
     COARSE_SIGMA = 35
-    FITNESS_THRESHOLD = 0.5
+    FITNESS_THRESHOLD = 0.35
 
     coarse_angles_raw = get_relative_angles(cnt_pts, export=False, sigma=COARSE_SIGMA)
     min_gap = int(len(coarse_angles_raw) / 8)
@@ -463,6 +463,30 @@ def my_find_corner_signature(cnt, green=False):
             best_fitness = fitness
             best_fit_coarse = np.array(sp, dtype=int)
             best_strategy = "4-candidate"
+
+
+    # Post-correction: for each of the 4 found corners, try replacing it with
+    # the rectangle-derived position from the other 3 (D = A + C - B).
+    # Handles the case where 3 corners are correct but 1 is slightly off.
+    if best_fit_coarse is not None:
+        for replace_i in range(4):
+            others = [int(best_fit_coarse[j]) for j in range(4) if j != replace_i]
+            for mid_i in range(3):
+                idxA = others[(mid_i - 1) % 3]
+                idxB = others[mid_i]   # middle corner (right angle between A and C)
+                idxC = others[(mid_i + 1) % 3]
+                D = (cnt_pts[idxA].astype(float) + cnt_pts[idxC].astype(float)
+                     - cnt_pts[idxB].astype(float))
+                idxD = _nearest_contour_idx(cnt_pts, D)
+                new_sp = sorted([idxA, idxB, idxC, idxD])
+                if len(set(new_sp)) < 4 or not _valid_spacing(new_sp):
+                    continue
+                new_fitness = _combined_fitness(new_sp)
+                if new_fitness < best_fitness:
+                    best_fitness = new_fitness
+                    best_fit_coarse = np.array(new_sp, dtype=int)
+                    best_strategy = "post-correction"
+                    break  # take first improvement for this corner, move to next
 
     print(f"  [coarse sigma={COARSE_SIGMA}] best_fitness={best_fitness:.3f} "
           f"strategy={best_strategy} "
@@ -1013,6 +1037,31 @@ def export_contours_without_colormatching(
             ) else "OK"
             print(f"  [dim-check] Piece {i}: short={short:.0f}px (med {med_short2:.0f}), "
                   f"long={long_:.0f}px (med {med_long2:.0f}) — {status}")
+
+    # Debug: draw all detected corners on the original image
+    if config.DEBUG_FILE_OUTPUT == 1:
+        _corner_canvas = img.copy()
+        _corner_colors = [(0, 0, 255), (0, 255, 0), (255, 0, 0), (0, 255, 255)]
+        for idx, cnt in enumerate(contours):
+            _c, _, _ = signatures[idx]
+            if _c is None:
+                continue
+            cv2.drawContours(_corner_canvas, [cnt], 0, (60, 60, 60), 1)
+            cnt_pts_dbg = np.array([cnt[int(ci)][0] for ci in _c])
+            # label piece index near centroid
+            _cx = int(cnt_pts_dbg[:, 0].mean())
+            _cy = int(cnt_pts_dbg[:, 1].mean())
+            cv2.putText(_corner_canvas, f"P{idx}", (_cx - 10, _cy),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 200, 0), 2)
+            for j, pt in enumerate(cnt_pts_dbg):
+                cv2.circle(_corner_canvas, tuple(pt.astype(int)), 8,
+                           _corner_colors[j % 4], -1)
+                cv2.putText(_corner_canvas, str(j), (int(pt[0]) + 6, int(pt[1]) - 6),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+        cv2.imwrite(
+            os.path.join(os.environ["ZOLVER_TEMP_DIR"], "corners_vis.png"),
+            _corner_canvas,
+        )
 
     for idx, cnt in enumerate(contours):
         corners, edges_shape, types_edges = signatures[idx]
