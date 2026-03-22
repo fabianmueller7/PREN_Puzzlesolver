@@ -382,6 +382,24 @@ def _centroid_idx(scores, center, half_win):
     return lo + offset
 
 
+def _group_peaks(peaks, min_gap):
+    """
+    Group a sorted array of peak indices into regions: consecutive peaks whose
+    pairwise index distance is <= min_gap belong to the same region.
+    Returns a list of lists (each inner list is one region's peak indices).
+    """
+    if len(peaks) == 0:
+        return []
+    peaks = sorted(peaks)
+    regions = [[peaks[0]]]
+    for p in peaks[1:]:
+        if p - regions[-1][-1] <= min_gap:
+            regions[-1].append(p)
+        else:
+            regions.append([p])
+    return regions
+
+
 def _rect_fitness(pts):
     """
     Measure how well 4 points (in order) form a rectangle.
@@ -448,11 +466,6 @@ def my_find_corner_signature(cnt, green=False):
 
     coarse_angles_raw = get_relative_angles(cnt_pts, export=False, sigma=COARSE_SIGMA)
     min_gap = int(len(coarse_angles_raw) / 8)
-    candidates = _pick_topN_spaced(coarse_angles_raw, min_gap, N=8)
-    # Enrich with weighted-centroid variants to handle clustered peaks near corners
-    half_win = max(2, min_gap // 4)
-    centroid_extras = [_centroid_idx(coarse_angles_raw, c, half_win) for c in candidates]
-    candidates = sorted(set(candidates + centroid_extras))
 
     OFFSET_LOW_c = len(coarse_angles_raw) / 8
     OFFSET_HIGH_c = len(coarse_angles_raw) / 2.0
@@ -472,41 +485,30 @@ def my_find_corner_signature(cnt, green=False):
         conf_f = 1.0 - float(np.mean(norm_scores[list(sp)]))
         return rect_f + SCORE_WEIGHT * conf_f
 
+    # Detect all raw peaks then group nearby peaks into regions/families.
+    # Search over 4-region combos; choose the representative inside each region
+    # AFTER rectangle scoring, not before.
+    max_coarse = float(np.max(coarse_angles_raw)) if len(coarse_angles_raw) > 0 else 0.0
+    all_peaks_c = list(detect_peaks(coarse_angles_raw, mph=0.3 * max_coarse)
+                       if max_coarse > 0 else [])
+    regions_c = _group_peaks(all_peaks_c, min_gap)
+    candidates = all_peaks_c   # used by post-corrections
+
     best_fit_coarse = None
     best_fitness = float('inf')
     best_strategy = None
 
-    # Strategy 2a: 3 high-confidence anchors → derive 4th from rectangle law
-    # D = A + C - B  (parallelogram law; diagonals bisect each other)
-    for trio in itertools.combinations(candidates, 3):
-        for mid_i in range(3):
-            idxA = trio[(mid_i - 1) % 3]
-            idxB = trio[mid_i]          # the corner between A and C
-            idxC = trio[(mid_i + 1) % 3]
-            A = cnt_pts[idxA].astype(float)
-            B = cnt_pts[idxB].astype(float)
-            C = cnt_pts[idxC].astype(float)
-            D_computed = A + C - B
-            idxD = _nearest_contour_idx(cnt_pts, D_computed)
-            sp = sorted([idxA, idxB, idxC, idxD])
+    for region_combo in itertools.combinations(range(len(regions_c)), 4):
+        reg_peaks = [regions_c[i] for i in region_combo]
+        for peak_combo in itertools.product(*reg_peaks):
+            sp = sorted(peak_combo)
             if len(set(sp)) < 4 or not _valid_spacing(sp):
                 continue
             fitness = _combined_fitness(sp)
             if fitness < best_fitness:
                 best_fitness = fitness
                 best_fit_coarse = np.array(sp, dtype=int)
-                best_strategy = "3-anchor"
-
-    # Strategy 2b: all 4 chosen from top candidates
-    for combo in itertools.combinations(candidates, 4):
-        sp = sorted(combo)
-        if not _valid_spacing(sp):
-            continue
-        fitness = _combined_fitness(sp)
-        if fitness < best_fitness:
-            best_fitness = fitness
-            best_fit_coarse = np.array(sp, dtype=int)
-            best_strategy = "4-candidate"
+                best_strategy = "region-search"
 
 
     # Post-correction: for each of the 4 found corners, try replacing it with
@@ -711,6 +713,12 @@ def my_find_corner_signature(cnt, green=False):
     best_fit = None
     best_offset = None
 
+    best_fit_global        = None
+    best_offset_global     = None
+    types_pieces_global    = []
+    best_rect_score_global = float('inf')
+    global_has_undefined   = True
+
     while sigma <= max_sigma:
         print("Smooth curve with sigma={}...".format(sigma))
 
@@ -857,14 +865,31 @@ def my_find_corner_signature(cnt, green=False):
 
         types_pieces = tmp_types_pieces
 
-        if no_undefined:
-            break
+        # Score by pure geometry so results are comparable across sigmas
+        best_fit_orig = best_fit - best_offset   # original (unrolled) indices
+        rect_score = _rect_fitness(cnt_pts[list(best_fit_orig)])
+
+        # Prefer: (1) no undefined edges, (2) lower rect_score
+        is_better = (
+            (no_undefined and global_has_undefined)
+            or (no_undefined == global_has_undefined and rect_score < best_rect_score_global)
+        )
+        if is_better:
+            best_fit_global        = best_fit_orig.copy()
+            best_offset_global     = best_offset
+            types_pieces_global    = list(types_pieces)
+            best_rect_score_global = rect_score
+            global_has_undefined   = not no_undefined
+            print(f"  [sigma={sigma}] new global best rect_score={rect_score:.4f} no_undefined={no_undefined}")
 
         sigma += 1
 
     # No valid fit found at all
-    if best_fit is None or best_offset is None or len(types_pieces) == 0:
+    if best_fit_global is None:
         return None, None, None
+    best_fit     = best_fit_global + best_offset_global
+    best_offset  = best_offset_global
+    types_pieces = types_pieces_global
 
     if types_pieces[-1] == TypeEdge.UNDEFINED:
         print("UNDEFINED FOUND - try to continue but something bad happened :(")
