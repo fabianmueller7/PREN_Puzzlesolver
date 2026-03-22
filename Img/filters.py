@@ -370,6 +370,18 @@ def _pick_topN_spaced(scores, min_gap, N=8):
     return sorted(result)
 
 
+def _centroid_idx(scores, center, half_win):
+    """Weighted centroid of scores in [center-half_win, center+half_win], snapped to int."""
+    lo = max(0, center - half_win)
+    hi = min(len(scores), center + half_win + 1)
+    window = scores[lo:hi]
+    total = np.sum(window)
+    if total < 1e-9:
+        return center
+    offset = int(round(np.dot(np.arange(len(window)), window) / total))
+    return lo + offset
+
+
 def _rect_fitness(pts):
     """
     Measure how well 4 points (in order) form a rectangle.
@@ -437,6 +449,10 @@ def my_find_corner_signature(cnt, green=False):
     coarse_angles_raw = get_relative_angles(cnt_pts, export=False, sigma=COARSE_SIGMA)
     min_gap = int(len(coarse_angles_raw) / 8)
     candidates = _pick_topN_spaced(coarse_angles_raw, min_gap, N=8)
+    # Enrich with weighted-centroid variants to handle clustered peaks near corners
+    half_win = max(2, min_gap // 4)
+    centroid_extras = [_centroid_idx(coarse_angles_raw, c, half_win) for c in candidates]
+    candidates = sorted(set(candidates + centroid_extras))
 
     OFFSET_LOW_c = len(coarse_angles_raw) / 8
     OFFSET_HIGH_c = len(coarse_angles_raw) / 2.0
@@ -533,6 +549,49 @@ def my_find_corner_signature(cnt, green=False):
                     best_fitness = new_fitness
                     best_fit_coarse = np.array(new_sp, dtype=int)
                     best_strategy = "post-correction-cand"
+
+    # Post-correction 3: geometry-only forced D=A+C-B pass.
+    # Accepts if _rect_fitness alone improves — ignores confidence penalty.
+    # Designed for the "3 correct corners + 1 wrong" scenario where the
+    # correct 4th corner is a weak peak so _combined_fitness doesn't improve.
+    if best_fit_coarse is not None:
+        current_rect_f = _rect_fitness(cnt_pts[list(best_fit_coarse)])
+        nbhd = max(5, int(len(coarse_angles_raw) * 0.05))
+        best_geom_fitness = current_rect_f
+        best_geom_sp = None
+
+        for replace_i in range(4):
+            others = [int(best_fit_coarse[j]) for j in range(4) if j != replace_i]
+            for mid_i in range(3):
+                idxA = others[(mid_i - 1) % 3]
+                idxB = others[mid_i]
+                idxC = others[(mid_i + 1) % 3]
+                D = (cnt_pts[idxA].astype(float) + cnt_pts[idxC].astype(float)
+                     - cnt_pts[idxB].astype(float))
+                idxD_raw = _nearest_contour_idx(cnt_pts, D)
+
+                # Try nearest contour point AND the strongest peak in its neighbourhood
+                candidates_D = [idxD_raw]
+                lo = max(0, idxD_raw - nbhd)
+                hi = min(len(coarse_angles_raw), idxD_raw + nbhd)
+                if hi > lo:
+                    peak_in_nbhd = lo + int(np.argmax(coarse_angles_raw[lo:hi]))
+                    if peak_in_nbhd != idxD_raw:
+                        candidates_D.append(peak_in_nbhd)
+
+                for idxD in candidates_D:
+                    new_sp = sorted([idxA, idxB, idxC, idxD])
+                    if len(set(new_sp)) < 4 or not _valid_spacing(new_sp):
+                        continue
+                    new_rect_f = _rect_fitness(cnt_pts[list(new_sp)])
+                    if new_rect_f < best_geom_fitness:
+                        best_geom_fitness = new_rect_f
+                        best_geom_sp = np.array(new_sp, dtype=int)
+
+        if best_geom_sp is not None:
+            best_fit_coarse = best_geom_sp
+            best_fitness = _combined_fitness(list(best_fit_coarse))
+            best_strategy = "post-correction-geom"
 
     print(f"  [coarse sigma={COARSE_SIGMA}] best_fitness={best_fitness:.3f} "
           f"strategy={best_strategy} "
