@@ -262,22 +262,19 @@ def peaks_inside(comb, peaks):
     return [peak for peak in peaks if peak > comb[0] and peak < comb[-1]]
 
 
-def is_pattern(comb, peaks, strict=True):
+def is_pattern(comb, peaks):
     """
     Check if the peaks formed an outdent or an indent pattern
 
     :param comb: Tuple of coordinates
     :param peaks: List of peaks
-    :param strict: If True, only 0/2/3 peaks allowed; if False, 0/1/2/3 peaks allowed
     :return: Int
     """
     cpt = len(peaks_inside(comb, peaks))
-    if strict:
-        return cpt == 0 or cpt == 2 or cpt == 3
-    return cpt == 0 or cpt == 1 or cpt == 2 or cpt == 3
+    return cpt == 0 or cpt == 2 or cpt == 3
 
 
-def is_acceptable_comb(combs, peaks, length, strict=True):
+def is_acceptable_comb(combs, peaks, length):
     """
     Check if a combination is composed of acceptable patterns.
     Used to filter the obviously bad combinations quickly.
@@ -285,7 +282,6 @@ def is_acceptable_comb(combs, peaks, length, strict=True):
     :param comb: Tuple of coordinates
     :param peaks: List of peaks
     :param length: Length of the signature (used for offset computation)
-    :param strict: Passed through to is_pattern; False allows count=1 segments
     :return: Boolean
     """
 
@@ -293,10 +289,10 @@ def is_acceptable_comb(combs, peaks, length, strict=True):
     combs_tmp = combs + offset
     peaks_tmp = (peaks + offset) % length
     return (
-        is_pattern([0, combs_tmp[0]], peaks_tmp, strict)
-        and is_pattern([combs_tmp[0], combs_tmp[1]], peaks_tmp, strict)
-        and is_pattern([combs_tmp[1], combs_tmp[2]], peaks_tmp, strict)
-        and is_pattern([combs_tmp[2], combs_tmp[3]], peaks_tmp, strict)
+        is_pattern([0, combs_tmp[0]], peaks_tmp)
+        and is_pattern([combs_tmp[0], combs_tmp[1]], peaks_tmp)
+        and is_pattern([combs_tmp[1], combs_tmp[2]], peaks_tmp)
+        and is_pattern([combs_tmp[2], combs_tmp[3]], peaks_tmp)
     )
 
 
@@ -309,40 +305,12 @@ def type_peak(peaks_pos_inside, peaks_neg_inside):
     :return: TypeEdge
     """
 
-    n_pos = len(peaks_pos_inside)
-    n_neg = len(peaks_neg_inside)
-
-    if n_pos == 0 and n_neg == 0:
+    if len(peaks_pos_inside) == 0 and len(peaks_neg_inside) == 0:
         return TypeEdge.BORDER
-
-    # Strict pattern: exactly 2 of one type sandwiched inside the other.
-    n_neg_inside_pos = len(peaks_inside(peaks_pos_inside, peaks_neg_inside))
-    n_pos_inside_neg = len(peaks_inside(peaks_neg_inside, peaks_pos_inside))
-
-    if n_neg_inside_pos == 2:
+    if len(peaks_inside(peaks_pos_inside, peaks_neg_inside)) == 2:
         return TypeEdge.HOLE
-    if n_pos_inside_neg == 2:
+    if len(peaks_inside(peaks_neg_inside, peaks_pos_inside)) == 2:
         return TypeEdge.HEAD
-
-    # Lenient fallbacks for complex (e.g. circular/smooth) features where
-    # strict peak counting fails:
-
-    # Only one polarity present → clear direction.
-    if n_pos > 0 and n_neg == 0:
-        return TypeEdge.HEAD
-    if n_neg > 0 and n_pos == 0:
-        return TypeEdge.HOLE
-
-    # More than 4 peaks total → likely a circular feature with many small peaks.
-    # Use majority vote on inner counts.
-    if n_pos + n_neg > 4:
-        if n_neg_inside_pos > n_pos_inside_neg:
-            return TypeEdge.HOLE
-        if n_pos_inside_neg > n_neg_inside_pos:
-            return TypeEdge.HEAD
-        # Tie: more outer-positive than outer-negative → outward bump → HEAD
-        return TypeEdge.HEAD if n_pos >= n_neg else TypeEdge.HOLE
-
     return TypeEdge.UNDEFINED
 
 
@@ -350,92 +318,6 @@ def normalized(a, axis=-1, order=2):
     l2 = np.atleast_1d(np.linalg.norm(a, ord=order, axis=axis))
     l2[l2 == 0] = 1
     return a / np.expand_dims(l2, axis)
-
-
-def _pick_topN_spaced(scores, min_gap, N=8):
-    """
-    Greedy selection of up to N indices from scores with minimum spacing min_gap.
-    Returns indices sorted in ascending order.
-    """
-    result = []
-    blocked = np.zeros(len(scores), dtype=bool)
-    for idx in np.argsort(scores)[::-1]:
-        if not blocked[idx]:
-            result.append(int(idx))
-            lo = max(0, idx - min_gap)
-            hi = min(len(scores), idx + min_gap)
-            blocked[lo:hi] = True
-        if len(result) == N:
-            break
-    return sorted(result)
-
-
-def _centroid_idx(scores, center, half_win):
-    """Weighted centroid of scores in [center-half_win, center+half_win], snapped to int."""
-    lo = max(0, center - half_win)
-    hi = min(len(scores), center + half_win + 1)
-    window = scores[lo:hi]
-    total = np.sum(window)
-    if total < 1e-9:
-        return center
-    offset = int(round(np.dot(np.arange(len(window)), window) / total))
-    return lo + offset
-
-
-def _group_peaks(peaks, min_gap):
-    """
-    Group a sorted array of peak indices into regions: consecutive peaks whose
-    pairwise index distance is <= min_gap belong to the same region.
-    Returns a list of lists (each inner list is one region's peak indices).
-    """
-    if len(peaks) == 0:
-        return []
-    peaks = sorted(peaks)
-    regions = [[peaks[0]]]
-    for p in peaks[1:]:
-        if p - regions[-1][-1] <= min_gap:
-            regions[-1].append(p)
-        else:
-            regions.append([p])
-    return regions
-
-
-def _rect_fitness(pts):
-    """
-    Measure how well 4 points (in order) form a rectangle.
-    Returns a non-negative score where 0 = perfect rectangle.
-    Two components:
-      - side_penalty: opposite sides should be equal length
-      - angle_penalty: each interior angle should be 90 degrees
-    """
-    def _dist(a, b):
-        return np.linalg.norm(a.astype(float) - b.astype(float))
-
-    def _angle_at(prev, cur, nxt):
-        v1 = prev.astype(float) - cur.astype(float)
-        v2 = nxt.astype(float) - cur.astype(float)
-        cos_val = np.dot(v1, v2) / (np.linalg.norm(v1) * np.linalg.norm(v2) + 1e-9)
-        return np.degrees(np.arccos(np.clip(cos_val, -1.0, 1.0)))
-
-    sides = [_dist(pts[i], pts[(i + 1) % 4]) for i in range(4)]
-    side_pen = (
-        abs(sides[0] - sides[2]) / (sides[0] + sides[2] + 1e-9)
-        + abs(sides[1] - sides[3]) / (sides[1] + sides[3] + 1e-9)
-    )
-    angle_pen = (
-        sum(abs(_angle_at(pts[(i - 1) % 4], pts[i], pts[(i + 1) % 4]) - 90.0)
-            for i in range(4))
-        / 90.0
-    )
-    return side_pen + angle_pen
-
-
-def _nearest_contour_idx(cnt_pts, target):
-    """
-    Find the index in cnt_pts (Nx2 array) closest to target (2D point).
-    """
-    diffs = cnt_pts.astype(float) - np.array(target, dtype=float)
-    return int(np.argmin(np.linalg.norm(diffs, axis=1)))
 
 
 def my_find_corner_signature(cnt, green=False):
@@ -450,344 +332,59 @@ def my_find_corner_signature(cnt, green=False):
 
     edges = []
     types_pieces = []
-
-    cnt_convert = [c[0] for c in cnt]
-    cnt_pts = np.array(cnt_convert)
-
-    # -----------------------------------------------------------------------
-    # Fast path: high-sigma scoring + rectangle fitness
-    # At very high sigma, tabs/holes smooth away (net angle ≈ 0) while the
-    # 4 real corner turns (~90°) survive as the dominant positive peaks.
-    # We pick the 8 highest-scoring candidate points, try all C(8,4)=70
-    # combinations, and select the one that best fits a rectangle.
-    # -----------------------------------------------------------------------
-    COARSE_SIGMA = 35
-    FITNESS_THRESHOLD = 0.35
-
-    coarse_angles_raw = get_relative_angles(cnt_pts, export=False, sigma=COARSE_SIGMA)
-    min_gap = int(len(coarse_angles_raw) / 8)
-
-    OFFSET_LOW_c = len(coarse_angles_raw) / 8
-    OFFSET_HIGH_c = len(coarse_angles_raw) / 2.0
-    SCORE_WEIGHT = 0.5  # weight of corner-confidence penalty vs. geometry
-
-    # Normalize coarse angle scores to [0, 1] for confidence term
-    norm_scores = coarse_angles_raw / (np.max(coarse_angles_raw) + 1e-9)
-
-    def _valid_spacing(sp):
-        gaps = [sp[1] - sp[0], sp[2] - sp[1], sp[3] - sp[2],
-                sp[0] + len(coarse_angles_raw) - sp[3]]
-        return all(OFFSET_LOW_c < g < OFFSET_HIGH_c for g in gaps)
-
-    def _combined_fitness(sp):
-        # Joint score: rectangle geometry + corner confidence
-        rect_f = _rect_fitness(cnt_pts[list(sp)])
-        conf_f = 1.0 - float(np.mean(norm_scores[list(sp)]))
-        return rect_f + SCORE_WEIGHT * conf_f
-
-    # Detect all raw peaks then group nearby peaks into regions/families.
-    # Search over 4-region combos; choose the representative inside each region
-    # AFTER rectangle scoring, not before.
-    max_coarse = float(np.max(coarse_angles_raw)) if len(coarse_angles_raw) > 0 else 0.0
-    all_peaks_c = list(detect_peaks(coarse_angles_raw, mph=0.3 * max_coarse)
-                       if max_coarse > 0 else [])
-    regions_c = _group_peaks(all_peaks_c, min_gap)
-    candidates = all_peaks_c   # used by post-corrections
-
-    best_fit_coarse = None
-    best_fitness = float('inf')
-    best_strategy = None
-
-    for region_combo in itertools.combinations(range(len(regions_c)), 4):
-        reg_peaks = [regions_c[i] for i in region_combo]
-        for peak_combo in itertools.product(*reg_peaks):
-            sp = sorted(peak_combo)
-            if len(set(sp)) < 4 or not _valid_spacing(sp):
-                continue
-            fitness = _combined_fitness(sp)
-            if fitness < best_fitness:
-                best_fitness = fitness
-                best_fit_coarse = np.array(sp, dtype=int)
-                best_strategy = "region-search"
-
-
-    # Post-correction: for each of the 4 found corners, try replacing it with
-    # the rectangle-derived position from the other 3 (D = A + C - B).
-    # Handles the case where 3 corners are correct but 1 is slightly off.
-    if best_fit_coarse is not None:
-        for replace_i in range(4):
-            others = [int(best_fit_coarse[j]) for j in range(4) if j != replace_i]
-            for mid_i in range(3):
-                idxA = others[(mid_i - 1) % 3]
-                idxB = others[mid_i]   # middle corner (right angle between A and C)
-                idxC = others[(mid_i + 1) % 3]
-                D = (cnt_pts[idxA].astype(float) + cnt_pts[idxC].astype(float)
-                     - cnt_pts[idxB].astype(float))
-                idxD = _nearest_contour_idx(cnt_pts, D)
-                new_sp = sorted([idxA, idxB, idxC, idxD])
-                if len(set(new_sp)) < 4 or not _valid_spacing(new_sp):
-                    continue
-                new_fitness = _combined_fitness(new_sp)
-                if new_fitness < best_fitness:
-                    best_fitness = new_fitness
-                    best_fit_coarse = np.array(new_sp, dtype=int)
-                    best_strategy = "post-correction"
-                    break  # take first improvement for this corner, move to next
-
-    # Post-correction 2: for each of the 4 found corners, try replacing it with
-    # each unused top candidate directly.  This breaks the "self-consistent wrong
-    # corner" deadlock where D=A+C-B from the other 3 returns the same bad index.
-    if best_fit_coarse is not None:
-        for replace_i in range(4):
-            others = [int(best_fit_coarse[j]) for j in range(4) if j != replace_i]
-            for cand in candidates:
-                if cand in others:
-                    continue
-                new_sp = sorted(others + [cand])
-                if len(set(new_sp)) < 4 or not _valid_spacing(new_sp):
-                    continue
-                new_fitness = _combined_fitness(new_sp)
-                if new_fitness < best_fitness:
-                    best_fitness = new_fitness
-                    best_fit_coarse = np.array(new_sp, dtype=int)
-                    best_strategy = "post-correction-cand"
-
-    # Post-correction 3: geometry-only forced D=A+C-B pass.
-    # Accepts if _rect_fitness alone improves — ignores confidence penalty.
-    # Designed for the "3 correct corners + 1 wrong" scenario where the
-    # correct 4th corner is a weak peak so _combined_fitness doesn't improve.
-    if best_fit_coarse is not None:
-        current_rect_f = _rect_fitness(cnt_pts[list(best_fit_coarse)])
-        nbhd = max(5, int(len(coarse_angles_raw) * 0.05))
-        best_geom_fitness = current_rect_f
-        best_geom_sp = None
-
-        for replace_i in range(4):
-            others = [int(best_fit_coarse[j]) for j in range(4) if j != replace_i]
-            for mid_i in range(3):
-                idxA = others[(mid_i - 1) % 3]
-                idxB = others[mid_i]
-                idxC = others[(mid_i + 1) % 3]
-                D = (cnt_pts[idxA].astype(float) + cnt_pts[idxC].astype(float)
-                     - cnt_pts[idxB].astype(float))
-                idxD_raw = _nearest_contour_idx(cnt_pts, D)
-
-                # Try nearest contour point AND the strongest peak in its neighbourhood
-                candidates_D = [idxD_raw]
-                lo = max(0, idxD_raw - nbhd)
-                hi = min(len(coarse_angles_raw), idxD_raw + nbhd)
-                if hi > lo:
-                    peak_in_nbhd = lo + int(np.argmax(coarse_angles_raw[lo:hi]))
-                    if peak_in_nbhd != idxD_raw:
-                        candidates_D.append(peak_in_nbhd)
-
-                for idxD in candidates_D:
-                    new_sp = sorted([idxA, idxB, idxC, idxD])
-                    if len(set(new_sp)) < 4 or not _valid_spacing(new_sp):
-                        continue
-                    new_rect_f = _rect_fitness(cnt_pts[list(new_sp)])
-                    if new_rect_f < best_geom_fitness:
-                        best_geom_fitness = new_rect_f
-                        best_geom_sp = np.array(new_sp, dtype=int)
-
-        if best_geom_sp is not None:
-            best_fit_coarse = best_geom_sp
-            best_fitness = _combined_fitness(list(best_fit_coarse))
-            best_strategy = "post-correction-geom"
-
-    print(f"  [coarse sigma={COARSE_SIGMA}] best_fitness={best_fitness:.3f} "
-          f"strategy={best_strategy} "
-          f"-> {'FAST PATH' if best_fitness < FITNESS_THRESHOLD else 'fallback to permutation'}")
-    if best_fit_coarse is not None and best_fitness < FITNESS_THRESHOLD:
-        # Classify edges using sigma=5 angle peaks
-        class_angles = get_relative_angles(
-            cnt_pts, export=(config.DEBUG_FILE_OUTPUT == 1), sigma=5
-        )
-        class_angles = np.array(class_angles)
-        class_angles_inv = -class_angles
-
-        max_rel = np.max(class_angles) if len(class_angles) > 0 else 0
-        extr_c = detect_peaks(class_angles, mph=0.3 * max_rel) if max_rel > 0 else np.array([], dtype=int)
-        max_rel_inv = np.max(class_angles_inv) if len(class_angles_inv) > 0 else 0
-        extr_c_inv = detect_peaks(class_angles_inv, mph=0.3 * max_rel_inv) if max_rel_inv > 0 else np.array([], dtype=int)
-
-        # Roll so the last corner lands near the end (matches existing logic)
-        best_offset_c = len(class_angles) - best_fit_coarse[3] - 1
-        best_fit_rolled = best_fit_coarse + best_offset_c
-        extr_c = (extr_c + best_offset_c) % len(class_angles)
-        extr_c_inv = (extr_c_inv + best_offset_c) % len(class_angles)
-
-        for seg in [
-            [0, best_fit_rolled[0]],
-            [best_fit_rolled[0], best_fit_rolled[1]],
-            [best_fit_rolled[1], best_fit_rolled[2]],
-            [best_fit_rolled[2], best_fit_rolled[3]],
-        ]:
-            pos_inside = peaks_inside(seg, extr_c)
-            neg_inside = peaks_inside(seg, extr_c_inv)
-            pos_inside.sort()
-            neg_inside.sort()
-            t = type_peak(pos_inside, neg_inside)
-            angle_sum = float(np.sum(class_angles[seg[0]:seg[1]]))
-            # Low-sum UNDEFINED: the net angle change is small → likely noisy border edge.
-            if t == TypeEdge.UNDEFINED and abs(angle_sum) < 1.0:
-                t = TypeEdge.BORDER
-            types_pieces.append(t)
-
-        # Refine corner positions with sigma=2, wider window since coarse is imprecise
-        _refined_angles = get_relative_angles(cnt_pts, export=False, sigma=2)
-        _refine_win = max(COARSE_SIGMA, 15)
-        _refined = []
-        for _k in range(4):
-            _orig = int(best_fit_coarse[_k])
-            _i0 = max(0, _orig - _refine_win)
-            _i1 = min(len(_refined_angles) - 1, _orig + _refine_win)
-            _refined.append(int(_i0 + np.argmax(_refined_angles[_i0:_i1 + 1])))
-        best_fit_tmp = np.array(_refined, dtype=int)
-
-        for i in range(3):
-            edges.append(cnt[best_fit_tmp[i]:best_fit_tmp[i + 1]])
-        edges.append(
-            np.concatenate((cnt[best_fit_tmp[3]:], cnt[:best_fit_tmp[0]]), axis=0)
-        )
-        edges = [np.array([x[0] for x in e]) for e in edges]
-
-        n_borders_fast = sum(1 for t in types_pieces if t == TypeEdge.BORDER)
-        if n_borders_fast > 0:
-            types_pieces.append(types_pieces[0])
-            return best_fit_tmp, edges, types_pieces[1:]
-
-        # 0 border edges at sigma=5 → the border edge may have small noise peaks.
-        # Retry classification at higher sigma where the border edge becomes truly flat.
-        for hi_sigma in [10, 15, 20]:
-            hi_angles = get_relative_angles(cnt_pts, export=False, sigma=hi_sigma)
-            hi_angles = np.array(hi_angles)
-            hi_angles_inv = -hi_angles
-            max_hi = np.max(hi_angles) if len(hi_angles) > 0 else 0
-            extr_hi = detect_peaks(hi_angles, mph=0.3 * max_hi) if max_hi > 0 else np.array([], dtype=int)
-            max_hi_inv = np.max(hi_angles_inv) if len(hi_angles_inv) > 0 else 0
-            extr_hi_inv = detect_peaks(hi_angles_inv, mph=0.3 * max_hi_inv) if max_hi_inv > 0 else np.array([], dtype=int)
-
-            hi_offset = len(hi_angles) - best_fit_coarse[3] - 1
-            hi_rolled = best_fit_coarse + hi_offset
-            extr_hi = (extr_hi + hi_offset) % len(hi_angles)
-            extr_hi_inv = (extr_hi_inv + hi_offset) % len(hi_angles)
-
-            hi_types = []
-            for seg in [
-                [0, hi_rolled[0]],
-                [hi_rolled[0], hi_rolled[1]],
-                [hi_rolled[1], hi_rolled[2]],
-                [hi_rolled[2], hi_rolled[3]],
-            ]:
-                pos_in = peaks_inside(seg, extr_hi)
-                neg_in = peaks_inside(seg, extr_hi_inv)
-                pos_in.sort(); neg_in.sort()
-                t = type_peak(pos_in, neg_in)
-                hi_sum = float(np.sum(hi_angles[seg[0]:seg[1]]))
-                if t == TypeEdge.UNDEFINED and abs(hi_sum) < 1.0:
-                    t = TypeEdge.BORDER
-                hi_types.append(t)
-
-            n_borders_hi = sum(1 for t in hi_types if t == TypeEdge.BORDER)
-            print(f"  [fast path sigma={hi_sigma} retry] borders={n_borders_hi} types={[t.name for t in hi_types]}")
-            if n_borders_hi > 0:
-                types_pieces = hi_types
-                types_pieces.append(types_pieces[0])
-                return best_fit_tmp, edges, types_pieces[1:]
-
-        # Still 0 borders after higher-sigma retries → fall to sigma=5 permutation
-        print(f"  [fast path] 0 borders detected → falling back to sigma=5 permutation")
-        types_pieces.clear()
-        edges.clear()
-
-    # -----------------------------------------------------------------------
-    # Fallback: original sigma-escalation + permutation search
-    # -----------------------------------------------------------------------
     sigma = 5
     max_sigma = 12
     if not green:
         sigma = 5
         max_sigma = 15
-
-    best_fit = None
-    best_offset = None
-
-    best_fit_global        = None
-    best_offset_global     = None
-    types_pieces_global    = []
-    best_rect_score_global = float('inf')
-    global_has_undefined   = True
-
     while sigma <= max_sigma:
         print("Smooth curve with sigma={}...".format(sigma))
 
         tmp_combs_final = []
 
         # Find relative angles
+        cnt_convert = [c[0] for c in cnt]
         relative_angles = get_relative_angles(
-            np.array(cnt_convert),
-            export=(config.DEBUG_FILE_OUTPUT == 1),  # saves fig*.png and save*.p
-            sigma=sigma
+            np.array(cnt_convert), export=False, sigma=sigma
         )
         relative_angles = np.array(relative_angles)
         relative_angles_inverse = -np.array(relative_angles)
 
-        # Positive peaks
-        max_rel = np.max(relative_angles) if len(relative_angles) > 0 else 0
-        extr_tmp = detect_peaks(relative_angles, mph=0.3 * max_rel) if max_rel > 0 else np.array([], dtype=int)
-
+        extr_tmp = detect_peaks(relative_angles, mph=0.3 * np.max(relative_angles))
         relative_angles = np.roll(relative_angles, int(len(relative_angles) / 2))
-        max_rel_rolled = max(relative_angles) if len(relative_angles) > 0 else 0
-        extra_peaks = (
-            detect_peaks(relative_angles, mph=0.3 * max_rel_rolled)
-            if max_rel_rolled > 0
-            else np.array([], dtype=int)
-        )
         extr_tmp = np.append(
             extr_tmp,
-            (extra_peaks - int(len(relative_angles) / 2)) % len(relative_angles),
-            axis=0,
+            (
+                detect_peaks(relative_angles, mph=0.3 * max(relative_angles))
+                - int(len(relative_angles) / 2)
             )
+            % len(relative_angles),
+            axis=0,
+        )
         relative_angles = np.roll(relative_angles, -int(len(relative_angles) / 2))
         extr_tmp = np.unique(extr_tmp)
 
-        # Negative peaks
-        max_rel_inv = np.max(relative_angles_inverse) if len(relative_angles_inverse) > 0 else 0
-        extr_tmp_inverse = (
-            detect_peaks(relative_angles_inverse, mph=0.3 * max_rel_inv)
-            if max_rel_inv > 0
-            else np.array([], dtype=int)
+        extr_tmp_inverse = detect_peaks(
+            relative_angles_inverse, mph=0.3 * np.max(relative_angles_inverse)
         )
-
         relative_angles_inverse = np.roll(
             relative_angles_inverse, int(len(relative_angles_inverse) / 2)
-        )
-        max_rel_inv_rolled = max(relative_angles_inverse) if len(relative_angles_inverse) > 0 else 0
-        extra_peaks_inv = (
-            detect_peaks(relative_angles_inverse, mph=0.3 * max_rel_inv_rolled)
-            if max_rel_inv_rolled > 0
-            else np.array([], dtype=int)
         )
         extr_tmp_inverse = np.append(
             extr_tmp_inverse,
             (
-                    extra_peaks_inv - int(len(relative_angles_inverse) / 2)
-            ) % len(relative_angles_inverse),
-            axis=0,
+                detect_peaks(
+                    relative_angles_inverse, mph=0.3 * max(relative_angles_inverse)
+                )
+                - int(len(relative_angles_inverse) / 2)
             )
-        relative_angles_inverse = np.roll(
-            relative_angles_inverse, -int(len(relative_angles_inverse) / 2)
+            % len(relative_angles_inverse),
+            axis=0,
         )
         extr_tmp_inverse = np.unique(extr_tmp_inverse)
 
         extr = extr_tmp
         extr_inverse = extr_tmp_inverse
-
-        if len(relative_angles) == 0 or len(extr) < 4:
-            print(f"  [sigma={sigma}] Too few peaks: {len(extr)} positive peaks found (need >= 4)")
-            sigma += 1
-            continue
 
         relative_angles = normalized(relative_angles[:, np.newaxis], axis=0).ravel()
 
@@ -796,59 +393,45 @@ def my_find_corner_signature(cnt, green=False):
         combs_l = list(combs)
         OFFSET_LOW = len(relative_angles) / 8
         OFFSET_HIGH = len(relative_angles) / 2.0
-
-        # Use strict peak-count rules only for low sigma; high sigma is a last-resort
-        # fallback for imperfect (e.g. paper-cutout) pieces where a stray peak can
-        # land alone in one segment and block all candidates.
-        strict = (sigma < 10)
-
-        passed_length = 0
-        passed_comb = 0
-        for comb in combs_l:
+        for icomb, comb in enumerate(combs_l):
             if (
-                    (comb[0] > comb[1])
-                    and (comb[1] > comb[2])
-                    and (comb[2] > comb[3])
-                    and ((comb[0] - comb[1]) > OFFSET_LOW)
-                    and ((comb[0] - comb[1]) < OFFSET_HIGH)
-                    and ((comb[1] - comb[2]) > OFFSET_LOW)
-                    and ((comb[1] - comb[2]) < OFFSET_HIGH)
-                    and ((comb[2] - comb[3]) > OFFSET_LOW)
-                    and ((comb[2] - comb[3]) < OFFSET_HIGH)
-                    and ((comb[3] + (len(relative_angles) - comb[0])) > OFFSET_LOW)
-                    and ((comb[3] + (len(relative_angles) - comb[0])) < OFFSET_HIGH)
+                (comb[0] > comb[1])
+                and (comb[1] > comb[2])
+                and (comb[2] > comb[3])
+                and ((comb[0] - comb[1]) > OFFSET_LOW)
+                and ((comb[0] - comb[1]) < OFFSET_HIGH)
+                and ((comb[1] - comb[2]) > OFFSET_LOW)
+                and ((comb[1] - comb[2]) < OFFSET_HIGH)
+                and ((comb[2] - comb[3]) > OFFSET_LOW)
+                and ((comb[2] - comb[3]) < OFFSET_HIGH)
+                and ((comb[3] + (len(relative_angles) - comb[0])) > OFFSET_LOW)
+                and ((comb[3] + (len(relative_angles) - comb[0])) < OFFSET_HIGH)
             ):
-                passed_length += 1
-                candidate = (comb[3], comb[2], comb[1], comb[0])
-                if is_acceptable_comb(candidate, extr, len(relative_angles), strict) and is_acceptable_comb(
-                        candidate, extr_inverse, len(relative_angles), strict
+                if is_acceptable_comb(
+                    (comb[3], comb[2], comb[1], comb[0]), extr, len(relative_angles)
+                ) and is_acceptable_comb(
+                    (comb[3], comb[2], comb[1], comb[0]),
+                    extr_inverse,
+                    len(relative_angles),
                 ):
-                    passed_comb += 1
-                    tmp_combs_final.append(candidate)
-
+                    tmp_combs_final.append((comb[3], comb[2], comb[1], comb[0]))
+        sigma += 1
         if len(tmp_combs_final) == 0:
-            print(f"  [sigma={sigma}] peaks={len(extr)} passed_length={passed_length} passed_comb={passed_comb} (OFFSET_LOW={OFFSET_LOW:.0f}, peaks_pos={list(extr)})")
-            sigma += 1
             continue
 
-        # Best corner fit for this sigma
-        best_fit = np.array(
-            tmp_combs_final[
-                compute_comp(tmp_combs_final, relative_angles, method="flat")
-            ],
-            dtype=int,
-        )
+        best_fit = tmp_combs_final[
+            compute_comp(tmp_combs_final, relative_angles, method="flat")
+        ]
 
         # Roll the values of relative angles for this combination
-        best_offset = len(relative_angles) - best_fit[3] - 1
-        relative_angles = np.roll(relative_angles, best_offset)
-        best_fit = best_fit + best_offset
-        extr = (extr + best_offset) % len(relative_angles)
-        extr_inverse = (extr_inverse + best_offset) % len(relative_angles)
+        offset = len(relative_angles) - best_fit[3] - 1
+        relative_angles = np.roll(relative_angles, offset)
+        best_fit += offset
+        extr = (extr + offset) % len(relative_angles)
+        extr_inverse = (extr_inverse + offset) % len(relative_angles)
 
         tmp_types_pieces = []
         no_undefined = True
-
         for best_comb in [
             [0, best_fit[0]],
             [best_fit[0], best_fit[1]],
@@ -865,64 +448,28 @@ def my_find_corner_signature(cnt, green=False):
 
         types_pieces = tmp_types_pieces
 
-        # Score by pure geometry so results are comparable across sigmas
-        best_fit_orig = best_fit - best_offset   # original (unrolled) indices
-        rect_score = _rect_fitness(cnt_pts[list(best_fit_orig)])
+        if no_undefined:
+            break
 
-        # Prefer: (1) no undefined edges, (2) lower rect_score
-        is_better = (
-            (no_undefined and global_has_undefined)
-            or (no_undefined == global_has_undefined and rect_score < best_rect_score_global)
-        )
-        if is_better:
-            best_fit_global        = best_fit_orig.copy()
-            best_offset_global     = best_offset
-            types_pieces_global    = list(types_pieces)
-            best_rect_score_global = rect_score
-            global_has_undefined   = not no_undefined
-            print(f"  [sigma={sigma}] new global best rect_score={rect_score:.4f} no_undefined={no_undefined}")
-
-        sigma += 1
-
-    # No valid fit found at all
-    if best_fit_global is None:
+    if len(types_pieces) == 0:
         return None, None, None
-    best_fit     = best_fit_global + best_offset_global
-    best_offset  = best_offset_global
-    types_pieces = types_pieces_global
 
     if types_pieces[-1] == TypeEdge.UNDEFINED:
         print("UNDEFINED FOUND - try to continue but something bad happened :(")
-        print(types_pieces[-1])
+        print(tmp_types_pieces[-1])
 
-    # Back to original contour indexing — then refine each corner using a
-    # lightly-smoothed (sigma=2) angle curve so the peak is closer to the true
-    # geometric corner and both matching edges end up with consistent lengths.
-    _refined_angles = get_relative_angles(
-        np.array(cnt_convert), export=False, sigma=2
-    )
-    _refine_win = max(int(sigma * 1.5), 5)
-    _coarse = (best_fit - best_offset).tolist()
-    _refined = []
-    for _k in range(4):
-        _orig = _coarse[_k]
-        _i0 = max(0, _orig - _refine_win)
-        _i1 = min(len(_refined_angles) - 1, _orig + _refine_win)
-        _refined.append(int(_i0 + np.argmax(_refined_angles[_i0 : _i1 + 1])))
-    best_fit_tmp = np.array(_refined, dtype=int)
-
+    best_fit_tmp = best_fit - offset
     for i in range(3):
         edges.append(cnt[best_fit_tmp[i] : best_fit_tmp[i + 1]])
     edges.append(
         np.concatenate((cnt[best_fit_tmp[3] :], cnt[: best_fit_tmp[0]]), axis=0)
     )
 
-    # quick'n'dirty fix of the shape
-    edges = [np.array([x[0] for x in e]) for e in edges]
-
-    # Preserve original return format
+    edges = [
+        np.array([x[0] for x in e]) for e in edges
+    ]  # quick'n'dirty fix of the shape
     types_pieces.append(types_pieces[0])
-    return best_fit_tmp, edges, types_pieces[1:]
+    return best_fit, edges, types_pieces[1:]
 
 
 def export_contours(
