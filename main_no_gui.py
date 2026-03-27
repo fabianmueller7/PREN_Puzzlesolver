@@ -1,17 +1,19 @@
 import argparse
-import atexit
+import glob
 import multiprocessing as mp
 import os
-import tempfile
 
 import matplotlib.pyplot as plt
 
 from Puzzle.Puzzle import Puzzle
 
-# Create and use temporary directory
-temp_dir = tempfile.TemporaryDirectory()
-os.environ["ZOLVER_TEMP_DIR"] = temp_dir.name
-atexit.register(temp_dir.cleanup)
+# Use persistent debug output directory
+debug_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "debug_output")
+os.makedirs(debug_dir, exist_ok=True)
+for f in glob.glob(os.path.join(debug_dir, "*")):
+    os.remove(f)
+os.environ["ZOLVER_TEMP_DIR"] = debug_dir
+print(f"Debug output directory: {debug_dir}")
 
 # Parse arguments
 parser = argparse.ArgumentParser(description="Solve Puzzles!")

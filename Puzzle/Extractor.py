@@ -85,7 +85,7 @@ class Extractor:
             self._basic_morphology()
             backup_bw = self.img_bw.copy()
 
-        if config.DEBUG_MODE == 1:
+        if config.DEBUG_SHOW_DIAGRAMS == 1:
             show_image(self.img_bw, "final_bw_before_fallback")
 
         # 2) contours from current mask
@@ -118,11 +118,12 @@ class Extractor:
                 os.path.join(self.temp_dir, "binarized_threshold_final.png"),
             )
 
-        if config.DEBUG_MODE == 1:
+        if config.DEBUG_FILE_OUTPUT == 1:
             debug = np.zeros_like(self.img_bw)
             cv2.drawContours(debug, contours, -1, 255, 1)
             self._save_temp("contours_debug.png", debug)
-            show_image(debug, "final_contours")
+            if config.DEBUG_SHOW_DIAGRAMS == 1:
+                show_image(debug, "final_contours")
 
         self.log(">>> START contour/corner detection")
         puzzle_pieces = export_contours_without_colormatching(
@@ -186,7 +187,7 @@ class Extractor:
         bw = cv2.morphologyEx(bw, cv2.MORPH_CLOSE, kernel, iterations=1)
         bw = cv2.morphologyEx(bw, cv2.MORPH_OPEN, kernel, iterations=1)
 
-        if config.DEBUG_MODE == 1:
+        if config.DEBUG_FILE_OUTPUT == 1:
             self._save_temp("fallback_bw.png", bw)
 
         return bw

@@ -33,11 +33,10 @@ class Edge:
         """Restore the shape previously backedup"""
         self.shape = self.shape_backup
 
-    def is_compatible(self, e2):
-        """Helper to determine if two edges are compatible"""
+    def is_compatible(self, e2, relaxed=False):
+        """BORDER edges cannot match anything. All other pairs are allowed;
+        type priority is encoded in the distance score."""
         return (
-            (self.type == TypeEdge.HOLE and e2.type == TypeEdge.HEAD)
-            or (self.type == TypeEdge.HEAD and e2.type == TypeEdge.HOLE)
-            or self.type == TypeEdge.UNDEFINED
-            or e2.type == TypeEdge.UNDEFINED
+            self.type  != TypeEdge.BORDER and
+            e2.type    != TypeEdge.BORDER
         )

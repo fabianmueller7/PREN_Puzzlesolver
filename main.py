@@ -9,21 +9,21 @@ Aufgaben:
 """
 
 
-import atexit       # Zum Registrieren einer Aufräumfunktion beim Programmende
+import glob
 import os           # Für den Zugriff auf Umgebungsvariablen
 import sys          # Für Kommandozeilenargumente, die an Qt weitergegeben werden
-import tempfile     # Zum Erstellen eines temporären Verzeichnisses
 
 from PyQt5.QtWidgets import QApplication    # Hauptklasse der Qt-GUI-Anwendung
 from GUI.Viewer import Viewer               # Import des Hauptfensters (eigene Klasse)
 
 
 if __name__ == "__main__":
-    # Create and use temporary directory
-    temp_dir = tempfile.TemporaryDirectory()
-    print(f"Temporary directory created at: {temp_dir.name}")
-    os.environ["ZOLVER_TEMP_DIR"] = temp_dir.name
-    atexit.register(temp_dir.cleanup)
+    debug_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "debug_output")
+    os.makedirs(debug_dir, exist_ok=True)
+    for f in glob.glob(os.path.join(debug_dir, "*")):
+        os.remove(f)
+    os.environ["ZOLVER_TEMP_DIR"] = debug_dir
+    print(f"Debug output directory: {debug_dir}")
 
     # Display GUI and exit
     app = QApplication(sys.argv)

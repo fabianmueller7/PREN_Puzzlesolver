@@ -332,16 +332,11 @@ def my_find_corner_signature(cnt, green=False):
 
     edges = []
     types_pieces = []
-
     sigma = 5
     max_sigma = 12
     if not green:
         sigma = 5
         max_sigma = 15
-
-    best_fit = None
-    best_offset = None
-
     while sigma <= max_sigma:
         print("Smooth curve with sigma={}...".format(sigma))
 
@@ -350,67 +345,46 @@ def my_find_corner_signature(cnt, green=False):
         # Find relative angles
         cnt_convert = [c[0] for c in cnt]
         relative_angles = get_relative_angles(
-            np.array(cnt_convert),
-            export=(config.DEBUG_MODE == 1),
-            sigma=sigma
+            np.array(cnt_convert), export=False, sigma=sigma
         )
         relative_angles = np.array(relative_angles)
         relative_angles_inverse = -np.array(relative_angles)
 
-        # Positive peaks
-        max_rel = np.max(relative_angles) if len(relative_angles) > 0 else 0
-        extr_tmp = detect_peaks(relative_angles, mph=0.3 * max_rel) if max_rel > 0 else np.array([], dtype=int)
-
+        extr_tmp = detect_peaks(relative_angles, mph=0.3 * np.max(relative_angles))
         relative_angles = np.roll(relative_angles, int(len(relative_angles) / 2))
-        max_rel_rolled = max(relative_angles) if len(relative_angles) > 0 else 0
-        extra_peaks = (
-            detect_peaks(relative_angles, mph=0.3 * max_rel_rolled)
-            if max_rel_rolled > 0
-            else np.array([], dtype=int)
-        )
         extr_tmp = np.append(
             extr_tmp,
-            (extra_peaks - int(len(relative_angles) / 2)) % len(relative_angles),
-            axis=0,
+            (
+                detect_peaks(relative_angles, mph=0.3 * max(relative_angles))
+                - int(len(relative_angles) / 2)
             )
+            % len(relative_angles),
+            axis=0,
+        )
         relative_angles = np.roll(relative_angles, -int(len(relative_angles) / 2))
         extr_tmp = np.unique(extr_tmp)
 
-        # Negative peaks
-        max_rel_inv = np.max(relative_angles_inverse) if len(relative_angles_inverse) > 0 else 0
-        extr_tmp_inverse = (
-            detect_peaks(relative_angles_inverse, mph=0.3 * max_rel_inv)
-            if max_rel_inv > 0
-            else np.array([], dtype=int)
+        extr_tmp_inverse = detect_peaks(
+            relative_angles_inverse, mph=0.3 * np.max(relative_angles_inverse)
         )
-
         relative_angles_inverse = np.roll(
             relative_angles_inverse, int(len(relative_angles_inverse) / 2)
-        )
-        max_rel_inv_rolled = max(relative_angles_inverse) if len(relative_angles_inverse) > 0 else 0
-        extra_peaks_inv = (
-            detect_peaks(relative_angles_inverse, mph=0.3 * max_rel_inv_rolled)
-            if max_rel_inv_rolled > 0
-            else np.array([], dtype=int)
         )
         extr_tmp_inverse = np.append(
             extr_tmp_inverse,
             (
-                    extra_peaks_inv - int(len(relative_angles_inverse) / 2)
-            ) % len(relative_angles_inverse),
-            axis=0,
+                detect_peaks(
+                    relative_angles_inverse, mph=0.3 * max(relative_angles_inverse)
+                )
+                - int(len(relative_angles_inverse) / 2)
             )
-        relative_angles_inverse = np.roll(
-            relative_angles_inverse, -int(len(relative_angles_inverse) / 2)
+            % len(relative_angles_inverse),
+            axis=0,
         )
         extr_tmp_inverse = np.unique(extr_tmp_inverse)
 
         extr = extr_tmp
         extr_inverse = extr_tmp_inverse
-
-        if len(relative_angles) == 0 or len(extr) < 4:
-            sigma += 1
-            continue
 
         relative_angles = normalized(relative_angles[:, np.newaxis], axis=0).ravel()
 
@@ -419,49 +393,45 @@ def my_find_corner_signature(cnt, green=False):
         combs_l = list(combs)
         OFFSET_LOW = len(relative_angles) / 8
         OFFSET_HIGH = len(relative_angles) / 2.0
-
-        for comb in combs_l:
+        for icomb, comb in enumerate(combs_l):
             if (
-                    (comb[0] > comb[1])
-                    and (comb[1] > comb[2])
-                    and (comb[2] > comb[3])
-                    and ((comb[0] - comb[1]) > OFFSET_LOW)
-                    and ((comb[0] - comb[1]) < OFFSET_HIGH)
-                    and ((comb[1] - comb[2]) > OFFSET_LOW)
-                    and ((comb[1] - comb[2]) < OFFSET_HIGH)
-                    and ((comb[2] - comb[3]) > OFFSET_LOW)
-                    and ((comb[2] - comb[3]) < OFFSET_HIGH)
-                    and ((comb[3] + (len(relative_angles) - comb[0])) > OFFSET_LOW)
-                    and ((comb[3] + (len(relative_angles) - comb[0])) < OFFSET_HIGH)
+                (comb[0] > comb[1])
+                and (comb[1] > comb[2])
+                and (comb[2] > comb[3])
+                and ((comb[0] - comb[1]) > OFFSET_LOW)
+                and ((comb[0] - comb[1]) < OFFSET_HIGH)
+                and ((comb[1] - comb[2]) > OFFSET_LOW)
+                and ((comb[1] - comb[2]) < OFFSET_HIGH)
+                and ((comb[2] - comb[3]) > OFFSET_LOW)
+                and ((comb[2] - comb[3]) < OFFSET_HIGH)
+                and ((comb[3] + (len(relative_angles) - comb[0])) > OFFSET_LOW)
+                and ((comb[3] + (len(relative_angles) - comb[0])) < OFFSET_HIGH)
             ):
-                candidate = (comb[3], comb[2], comb[1], comb[0])
-                if is_acceptable_comb(candidate, extr, len(relative_angles)) and is_acceptable_comb(
-                        candidate, extr_inverse, len(relative_angles)
+                if is_acceptable_comb(
+                    (comb[3], comb[2], comb[1], comb[0]), extr, len(relative_angles)
+                ) and is_acceptable_comb(
+                    (comb[3], comb[2], comb[1], comb[0]),
+                    extr_inverse,
+                    len(relative_angles),
                 ):
-                    tmp_combs_final.append(candidate)
-
+                    tmp_combs_final.append((comb[3], comb[2], comb[1], comb[0]))
+        sigma += 1
         if len(tmp_combs_final) == 0:
-            sigma += 1
             continue
 
-        # Best corner fit for this sigma
-        best_fit = np.array(
-            tmp_combs_final[
-                compute_comp(tmp_combs_final, relative_angles, method="flat")
-            ],
-            dtype=int,
-        )
+        best_fit = tmp_combs_final[
+            compute_comp(tmp_combs_final, relative_angles, method="flat")
+        ]
 
         # Roll the values of relative angles for this combination
-        best_offset = len(relative_angles) - best_fit[3] - 1
-        relative_angles = np.roll(relative_angles, best_offset)
-        best_fit = best_fit + best_offset
-        extr = (extr + best_offset) % len(relative_angles)
-        extr_inverse = (extr_inverse + best_offset) % len(relative_angles)
+        offset = len(relative_angles) - best_fit[3] - 1
+        relative_angles = np.roll(relative_angles, offset)
+        best_fit += offset
+        extr = (extr + offset) % len(relative_angles)
+        extr_inverse = (extr_inverse + offset) % len(relative_angles)
 
         tmp_types_pieces = []
         no_undefined = True
-
         for best_comb in [
             [0, best_fit[0]],
             [best_fit[0], best_fit[1]],
@@ -481,31 +451,25 @@ def my_find_corner_signature(cnt, green=False):
         if no_undefined:
             break
 
-        sigma += 1
-
-    # No valid fit found at all
-    if best_fit is None or best_offset is None or len(types_pieces) == 0:
+    if len(types_pieces) == 0:
         return None, None, None
 
     if types_pieces[-1] == TypeEdge.UNDEFINED:
         print("UNDEFINED FOUND - try to continue but something bad happened :(")
-        print(types_pieces[-1])
+        print(tmp_types_pieces[-1])
 
-    # Back to original contour indexing
-    best_fit_tmp = (best_fit - best_offset).astype(int)
-
+    best_fit_tmp = best_fit - offset
     for i in range(3):
         edges.append(cnt[best_fit_tmp[i] : best_fit_tmp[i + 1]])
     edges.append(
         np.concatenate((cnt[best_fit_tmp[3] :], cnt[: best_fit_tmp[0]]), axis=0)
     )
 
-    # quick'n'dirty fix of the shape
-    edges = [np.array([x[0] for x in e]) for e in edges]
-
-    # Preserve original return format
+    edges = [
+        np.array([x[0] for x in e]) for e in edges
+    ]  # quick'n'dirty fix of the shape
     types_pieces.append(types_pieces[0])
-    return best_fit_tmp, edges, types_pieces[1:]
+    return best_fit, edges, types_pieces[1:]
 
 
 def export_contours(
@@ -537,7 +501,7 @@ def export_contours(
     list_img = []
     out_color = np.zeros_like(img)
 
-    if config.DEBUG_MODE == 1:
+    if config.DEBUG_FILE_OUTPUT == 1:
         signatures = [
             my_find_corner_signature(cnt, green)
             for cnt in contours
@@ -547,6 +511,35 @@ def export_contours(
             signatures = p.starmap(
                 my_find_corner_signature, zip(contours, itertools.repeat(green))
             )
+
+    # Cross-piece dimension check: all puzzle pieces should have the same
+    # width and height (within ~30%). An outlier likely has bad corner detection.
+    _dims = []
+    for idx, cnt in enumerate(contours):
+        corners_chk, _, _ = signatures[idx]
+        if corners_chk is None:
+            _dims.append(None)
+            continue
+        pts = np.array([cnt[int(c)][0] for c in corners_chk], dtype=float)
+        sides = [np.linalg.norm(pts[(i + 1) % 4] - pts[i]) for i in range(4)]
+        short = min((sides[0] + sides[2]) / 2, (sides[1] + sides[3]) / 2)
+        long_ = max((sides[0] + sides[2]) / 2, (sides[1] + sides[3]) / 2)
+        _dims.append((short, long_))
+
+    _valid_dims = [d for d in _dims if d is not None]
+    if len(_valid_dims) > 1:
+        med_short = float(np.median([d[0] for d in _valid_dims]))
+        med_long = float(np.median([d[1] for d in _valid_dims]))
+        _DIM_TOL = 0.3
+        for i, d in enumerate(_dims):
+            if d is None:
+                continue
+            short, long_ = d
+            short_err = abs(short - med_short) / (med_short + 1e-9)
+            long_err = abs(long_ - med_long) / (med_long + 1e-9)
+            status = "OUTLIER — corner detection may be wrong" if (short_err > _DIM_TOL or long_err > _DIM_TOL) else "OK"
+            print(f"  [dim-check] Piece {i}: short={short:.0f}px (med {med_short:.0f}), "
+                  f"long={long_:.0f}px (med {med_long:.0f}) — {status}")
 
     for idx, cnt in enumerate(contours):
         corners, edges_shape, types_edges = signatures[idx]
@@ -733,7 +726,7 @@ def export_contours_without_colormatching(
 
         return dir_map
 
-    if config.DEBUG_MODE == 1:
+    if config.DEBUG_FILE_OUTPUT == 1:
         signatures = [
             my_find_corner_signature(cnt, green)
             for cnt in contours
@@ -743,6 +736,59 @@ def export_contours_without_colormatching(
             signatures = p.starmap(
                 my_find_corner_signature, zip(contours, itertools.repeat(green))
             )
+
+    # Cross-piece dimension check
+    _dims2 = []
+    for idx, cnt in enumerate(contours):
+        corners_chk, _, _ = signatures[idx]
+        if corners_chk is None:
+            _dims2.append(None)
+            continue
+        pts = np.array([cnt[int(c)][0] for c in corners_chk], dtype=float)
+        sides = [np.linalg.norm(pts[(i + 1) % 4] - pts[i]) for i in range(4)]
+        short = min((sides[0] + sides[2]) / 2, (sides[1] + sides[3]) / 2)
+        long_ = max((sides[0] + sides[2]) / 2, (sides[1] + sides[3]) / 2)
+        _dims2.append((short, long_))
+    _valid_dims2 = [d for d in _dims2 if d is not None]
+    if len(_valid_dims2) > 1:
+        med_short2 = float(np.median([d[0] for d in _valid_dims2]))
+        med_long2 = float(np.median([d[1] for d in _valid_dims2]))
+        _DIM_TOL2 = 0.3
+        for i, d in enumerate(_dims2):
+            if d is None:
+                continue
+            short, long_ = d
+            status = "OUTLIER — corner detection may be wrong" if (
+                abs(short - med_short2) / (med_short2 + 1e-9) > _DIM_TOL2
+                or abs(long_ - med_long2) / (med_long2 + 1e-9) > _DIM_TOL2
+            ) else "OK"
+            print(f"  [dim-check] Piece {i}: short={short:.0f}px (med {med_short2:.0f}), "
+                  f"long={long_:.0f}px (med {med_long2:.0f}) — {status}")
+
+    # Debug: draw all detected corners on the original image
+    if config.DEBUG_FILE_OUTPUT == 1:
+        _corner_canvas = img.copy()
+        _corner_colors = [(0, 0, 255), (0, 255, 0), (255, 0, 0), (0, 255, 255)]
+        for idx, cnt in enumerate(contours):
+            _c, _, _ = signatures[idx]
+            if _c is None:
+                continue
+            cv2.drawContours(_corner_canvas, [cnt], 0, (60, 60, 60), 1)
+            cnt_pts_dbg = np.array([cnt[int(ci)][0] for ci in _c])
+            # label piece index near centroid
+            _cx = int(cnt_pts_dbg[:, 0].mean())
+            _cy = int(cnt_pts_dbg[:, 1].mean())
+            cv2.putText(_corner_canvas, f"P{idx}", (_cx - 10, _cy),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 200, 0), 2)
+            for j, pt in enumerate(cnt_pts_dbg):
+                cv2.circle(_corner_canvas, tuple(pt.astype(int)), 8,
+                           _corner_colors[j % 4], -1)
+                cv2.putText(_corner_canvas, str(j), (int(pt[0]) + 6, int(pt[1]) - 6),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+        cv2.imwrite(
+            os.path.join(os.environ["ZOLVER_TEMP_DIR"], "corners_vis.png"),
+            _corner_canvas,
+        )
 
     for idx, cnt in enumerate(contours):
         corners, edges_shape, types_edges = signatures[idx]
