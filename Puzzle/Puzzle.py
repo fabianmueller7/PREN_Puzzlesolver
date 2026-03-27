@@ -380,7 +380,9 @@ class Puzzle:
                                     diff_score = float("inf")
                                     break
                                 else:
-                                    diff_score += diff[edge_exposed][edge]
+                                    diff_score += diff.get(edge_exposed, {}).get(edge, float("inf"))
+                                    if diff_score == float("inf"):
+                                        break
                                     last_test = edge_exposed, edge
                             if diff_score < min_diff:
                                 best_bloc_e, best_e, min_diff = (
@@ -408,10 +410,15 @@ class Puzzle:
                             connected_direction,
                         )
                     )
-                    if len(neighbor) == 1 or (
-                        len(neighbor) == 2 and len(left_piece) == 1
-                    ):
+                    if len(neighbor) == 1:
                         best_coord.append(((x, y), neighbor[0]))
+                    elif len(neighbor) >= 2 and len(left_piece) == 1:
+                        # Last remaining piece: position may be surrounded by 2 or 3
+                        # already-placed neighbours (e.g. the centre edge piece in a 2×3
+                        # grid).  Try every neighbour so that is_border_aligned can find
+                        # a valid anchor regardless of list order.
+                        for n in neighbor:
+                            best_coord.append(((x, y), n))
 
             for c, neighbor in best_coord:
                 for p in left_piece:
@@ -444,7 +451,7 @@ class Puzzle:
                         ):
                             diff_score = float("inf")
                         else:
-                            diff_score = diff[edge_exposed][edge]
+                            diff_score = diff.get(edge_exposed, {}).get(edge, float("inf"))
 
                         if diff_score < min_diff:
                             best_bloc_e, best_e, min_diff = (
@@ -658,6 +665,16 @@ class Puzzle:
                     ix, iy = int(ex) - minX, int(ey) - minY
                     if 0 <= ix < border_img.shape[0] and 0 <= iy < border_img.shape[1]:
                         cv2.circle(border_img, (iy, ix), 4, (128, 0, 128), -1)
+
+                # Draw center of mass marker (cyan crosshair) for each piece
+                if len(piece.pixels) > 0:
+                    xs = [px for (px, py) in piece.pixels]
+                    ys = [py for (px, py) in piece.pixels]
+                    com_x = int(np.mean(xs)) - minX
+                    com_y = int(np.mean(ys)) - minY
+                    if 0 <= com_x < border_img.shape[0] and 0 <= com_y < border_img.shape[1]:
+                        cv2.drawMarker(border_img, (com_y, com_x), (0, 255, 255),
+                                       cv2.MARKER_CROSS, 14, 2, cv2.LINE_AA)
 
                 # Draw color legend
                 # Colors are in BGR (OpenCV convention) to match what's drawn in border_img
