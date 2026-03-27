@@ -298,7 +298,10 @@ def is_acceptable_comb(combs, peaks, length):
 
 def type_peak(peaks_pos_inside, peaks_neg_inside):
     """
-    Determine the type of lists of pos and neg peaks
+    Determine the type of lists of pos and neg peaks.
+    Uses the strict friend's pattern (2 nested peaks) so as not to affect
+    the sigma-loop termination condition. UNDEFINED is resolved separately
+    via a post-loop reclassification pass in my_find_corner_signature.
 
     :param peaks_pos_inside: List of positive peaks
     :param peaks_neg_inside: List of negative peaks
@@ -311,6 +314,48 @@ def type_peak(peaks_pos_inside, peaks_neg_inside):
         return TypeEdge.HOLE
     if len(peaks_inside(peaks_neg_inside, peaks_pos_inside)) == 2:
         return TypeEdge.HEAD
+    return TypeEdge.UNDEFINED
+
+
+def _reclassify_undefined(t, pos_in, neg_in, segment_angles=None):
+    """
+    Permissive fallback for edges that type_peak left as UNDEFINED.
+    Used as a post-loop reclassification step for round/smooth features
+    whose single broad peak doesn't satisfy the strict 2-nested-peaks rule.
+
+    :param segment_angles: Optional slice of normalized relative_angles for this edge.
+                           When provided, used to guard against misclassifying slightly
+                           rounded border edges as HEAD/HOLE.
+    """
+    # Threshold: max abs amplitude below which a single-polarity segment is BORDER.
+    # The signal is L2-normalized over the whole contour, so a flat/rounded border
+    # contributes very little energy while a real connector has significant amplitude.
+    FLAT_BORDER_THRESHOLD = 0.05
+
+    if t != TypeEdge.UNDEFINED:
+        return t
+    # Round feature: >=1 peak of one polarity nested inside the other
+    if len(peaks_inside(pos_in, neg_in)) >= 1:
+        return TypeEdge.HOLE
+    if len(peaks_inside(neg_in, pos_in)) >= 1:
+        return TypeEdge.HEAD
+    # Only one polarity present – check amplitude before committing to HEAD/HOLE.
+    # A slightly curved border edge can produce a single spurious peak; if the
+    # signal energy in the segment is too low it is BORDER, not a real connector.
+    if len(pos_in) > 0 and len(neg_in) == 0:
+        if segment_angles is not None:
+            amp = np.max(np.abs(segment_angles))
+            print(f"[reclassify] single-pos peak, max_amp={amp:.4f}, threshold={FLAT_BORDER_THRESHOLD}")
+            if amp < FLAT_BORDER_THRESHOLD:
+                return TypeEdge.BORDER
+        return TypeEdge.HEAD
+    if len(neg_in) > 0 and len(pos_in) == 0:
+        if segment_angles is not None:
+            amp = np.max(np.abs(segment_angles))
+            print(f"[reclassify] single-neg peak, max_amp={amp:.4f}, threshold={FLAT_BORDER_THRESHOLD}")
+            if amp < FLAT_BORDER_THRESHOLD:
+                return TypeEdge.BORDER
+        return TypeEdge.HOLE
     return TypeEdge.UNDEFINED
 
 
@@ -457,6 +502,25 @@ def my_find_corner_signature(cnt, green=False):
     if types_pieces[-1] == TypeEdge.UNDEFINED:
         print("UNDEFINED FOUND - try to continue but something bad happened :(")
         print(tmp_types_pieces[-1])
+
+    # Post-loop reclassification: resolve any remaining UNDEFINED edges using
+    # permissive fallbacks for round/smooth features. This runs after the sigma
+    # loop so it does not affect the loop's no_undefined break condition (which
+    # controls how far sigma escalates for accurate corner placement).
+    best_combs = [
+        [0, best_fit[0]],
+        [best_fit[0], best_fit[1]],
+        [best_fit[1], best_fit[2]],
+        [best_fit[2], best_fit[3]],
+    ]
+    for i, (t, seg) in enumerate(zip(types_pieces, best_combs)):
+        if t == TypeEdge.UNDEFINED:
+            pos_in = peaks_inside(seg, extr)
+            neg_in = peaks_inside(seg, extr_inverse)
+            pos_in.sort()
+            neg_in.sort()
+            seg_angles = relative_angles[seg[0]:seg[1]] if seg[1] > seg[0] else relative_angles[seg[0]:]
+            types_pieces[i] = _reclassify_undefined(t, pos_in, neg_in, segment_angles=seg_angles)
 
     best_fit_tmp = best_fit - offset
     for i in range(3):
