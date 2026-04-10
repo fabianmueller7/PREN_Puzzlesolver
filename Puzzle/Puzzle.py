@@ -657,6 +657,30 @@ class Puzzle:
                             border_img[x, y, 1] = rgb[1]
                             border_img[x, y, 2] = rgb[0]
 
+                # Draw outer (offset) edge as tolerance band
+                if config.EDGE_OFFSET > 0:
+                    # Compute centroid directly from edge shape points so the
+                    # coordinate system matches edge.shape — avoids any (row,col)
+                    # vs (col,row) mismatch that can flip the outward normal.
+                    all_edge_pts = np.concatenate(
+                        [np.asarray(e.shape, dtype=np.float32)
+                         for e in piece.edges_ if len(e.shape) > 0],
+                        axis=0,
+                    ) if any(len(e.shape) > 0 for e in piece.edges_) else None
+                    centroid = tuple(all_edge_pts.mean(axis=0)) if all_edge_pts is not None else None
+                    for e in piece.edges_:
+                        if len(e.shape) < 2 or centroid is None:
+                            continue
+                        offset_pts = e.compute_offset_shape(config.EDGE_OFFSET, centroid)
+                        pts_img = np.array(
+                            [[(int(oy) - minY, int(ox) - minX)] for oy, ox in offset_pts],
+                            dtype=np.int32,
+                        )
+                        cv2.polylines(
+                            border_img, [pts_img], isClosed=False,
+                            color=(0, 165, 255), thickness=1,  # orange (BGR)
+                        )
+
                 # Draw purple dots at piece corners (where edges meet)
                 for e in piece.edges_:
                     if len(e.shape) == 0:
@@ -683,6 +707,7 @@ class Puzzle:
                     ((255, 178, 102), "HOLE (indentation)"),
                     ((102, 255, 255), "HEAD (protrusion)"),
                     ((0, 0, 255),     "UNDEFINED"),
+                    ((0, 165, 255),   f"OUTER EDGE (+{config.EDGE_OFFSET}px offset)"),
                 ]
                 box_size = 16
                 padding = 6
