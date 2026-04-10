@@ -381,7 +381,9 @@ def my_find_corner_signature(cnt, green=False):
     max_sigma = 12
     if not green:
         sigma = 5
-        max_sigma = 15
+        # Increased from 15 to 20 to handle noisy contours with extra peaks
+        # Some puzzle pieces have jagged edges that need aggressive smoothing
+        max_sigma = 20
     while sigma <= max_sigma:
         print("Smooth curve with sigma={}...".format(sigma))
 

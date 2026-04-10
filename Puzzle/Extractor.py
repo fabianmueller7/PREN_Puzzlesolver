@@ -223,8 +223,8 @@ class Extractor:
         bw = cv2.morphologyEx(bw, cv2.MORPH_CLOSE, kernel_close, iterations=2)
         bw = cv2.morphologyEx(bw, cv2.MORPH_OPEN, kernel_open, iterations=1)
 
-        # Optional: Gaussian blur + rethreshold to smooth jaggies
-        bw = cv2.GaussianBlur(bw, (5, 5), 0)
+        # Optional: Gaussian blur + rethreshold to smooth jaggies (increased blur for noisier images)
+        bw = cv2.GaussianBlur(bw, (7, 7), 0)
         _, bw = cv2.threshold(bw, 128, 255, cv2.THRESH_BINARY)
 
         self._save_temp("simple_bw_raw.png", bw)

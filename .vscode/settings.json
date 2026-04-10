@@ -1,0 +1,32 @@
+{
+    "chat.tools.terminal.autoApprove": {
+        "/^cd \"c:\\\\Users\\\\valer\\\\OneDrive - Hochschule Luzern\\\\Sem 4\\\\PREN1\\\\Algorithmus\\\\PREN_Puzzlesolver\" ; python -m pytest -xvs 2>&1 \\| head -50$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "/^cd \"c:\\\\Users\\\\valer\\\\OneDrive - Hochschule Luzern\\\\Sem 4\\\\PREN1\\\\Algorithmus\\\\PREN_Puzzlesolver\" ; python -c \"from Puzzle\\.alternative_solver import AlternativeSolver; print\\('Import successful'\\)\"$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "/^cd \"c:\\\\Users\\\\valer\\\\OneDrive - Hochschule Luzern\\\\Sem 4\\\\PREN1\\\\Algorithmus\\\\PREN_Puzzlesolver\\\\tools\" ; python run_both_solvers\\.py --image \"C:\\\\Users\\\\valer\\\\OneDrive - Hochschule Luzern\\\\Sem 4\\\\PREN1\\\\Algorithmus\\\\PREN_Puzzlesolver\\\\resources\\\\must works\\\\Muster2\\.png\" --wait-alt-seconds 45 2>&1 \\| Select-Object -First 100$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "/^cd \"c:\\\\Users\\\\valer\\\\OneDrive - Hochschule Luzern\\\\Sem 4\\\\PREN1\\\\Algorithmus\\\\PREN_Puzzlesolver\" ; python debug_piece_extraction\\.py --image \"resources\\\\must works\\\\Puzzle_Variante6_6Teile\\.png\"$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "/^cd \"c:\\\\Users\\\\valer\\\\OneDrive - Hochschule Luzern\\\\Sem 4\\\\PREN1\\\\Algorithmus\\\\PREN_Puzzlesolver\" ; python debug_piece_extraction_deep\\.py --image \"resources\\\\must works\\\\Puzzle_Variante6_6Teile\\.png\" 2>&1 \\| grep -A 50 \"PIECE #\"$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "/^cd \"c:\\\\Users\\\\valer\\\\OneDrive - Hochschule Luzern\\\\Sem 4\\\\PREN1\\\\Algorithmus\\\\PREN_Puzzlesolver\" ; python debug_piece_extraction_deep\\.py --image \"resources\\\\must works\\\\Puzzle_Variante6_6Teile\\.png\" 2>&1 \\| tail -200$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "/^cd \"c:\\\\Users\\\\valer\\\\OneDrive - Hochschule Luzern\\\\Sem 4\\\\PREN1\\\\Algorithmus\\\\PREN_Puzzlesolver\" ; python debug_piece_extraction_deep\\.py --image \"resources\\\\must works\\\\Puzzle_Variante6_6Teile\\.png\"$/": {
+            "approve": true,
+            "matchCommandLine": true
+        }
+    }
+}
