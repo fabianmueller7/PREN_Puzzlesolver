@@ -5,6 +5,7 @@ import scipy.ndimage
 import numpy as np
 from numba import njit
 
+import config
 from .Enums import TypeEdge
 
 
@@ -301,18 +302,21 @@ def _edge_curvature_profile(pts, sigma=2, n_points=50):
     return scipy.ndimage.gaussian_filter(resampled, sigma=sigma)
 
 
-def _edge_curvature_score(e1, e2, n_points=50):
+def _edge_curvature_score(pts1, pts2, n_points=50):
     """
     Score how well two edges interlock based on curvature-profile alignment.
     Lower = better match.
+
+    Accepts raw point arrays (not Edge objects) so callers can pass either
+    the original shape or a pre-computed offset shape.
 
     Physical model: stick_pieces reverses the piece edge when gluing, so a
     feature at position p in e1 should correspond to a feature at position
     (1-p) in e2 (= position p in e2[::-1]).  A perfect match satisfies
     curv_e1 + curv_e2[::-1] ≈ 0 everywhere.
     """
-    c1 = _edge_curvature_profile(e1.shape, n_points=n_points)
-    c2 = _edge_curvature_profile(e2.shape, n_points=n_points)
+    c1 = _edge_curvature_profile(pts1, n_points=n_points)
+    c2 = _edge_curvature_profile(pts2, n_points=n_points)
     if c1 is None or c2 is None:
         return float("inf")
 
@@ -336,26 +340,50 @@ def _type_priority_offset(e1, e2):
     return 1000.0       # same-type (possible misclassification)
 
 
-def real_edge_compute(e1, e2):
-    """Match score for a real (photographed) puzzle edge pair."""
+def _offset_shape_for(edge, centroid):
+    """
+    Return the offset shape for *edge* when EDGE_OFFSET > 0 and a centroid
+    is available; otherwise return the original shape unchanged.
+    """
+    if config.EDGE_OFFSET > 0 and centroid is not None:
+        return edge.compute_offset_shape(config.EDGE_OFFSET, centroid)
+    return edge.shape
+
+
+def real_edge_compute(e1, e2, centroid1=None, centroid2=None):
+    """Match score for a real (photographed) puzzle edge pair.
+
+    centroid1/centroid2: centroid of the piece owning e1/e2 (in edge.shape
+    coordinate space).  When provided and EDGE_OFFSET > 0, the comparison
+    is done on the outward-offset edges rather than the raw detected contours.
+    """
+    s1 = _offset_shape_for(e1, centroid1)
+    s2 = _offset_shape_for(e2, centroid2)
+
     # 1. Arc-length filter
-    L1 = _arc_length(e1.shape)
-    L2 = _arc_length(e2.shape)
+    L1 = _arc_length(s1)
+    L2 = _arc_length(s2)
     if abs(L1 - L2) / max(L1, L2, 1.0) > 0.20:
         return float("inf")
 
     # 2. Curvature-profile score + type-priority offset
-    return _edge_curvature_score(e1, e2) + _type_priority_offset(e1, e2)
+    return _edge_curvature_score(s1, s2) + _type_priority_offset(e1, e2)
 
 
-def generated_edge_compute(e1, e2):
-    """Match score for a generated (CAD) puzzle edge pair."""
-    L1 = _arc_length(e1.shape)
-    L2 = _arc_length(e2.shape)
+def generated_edge_compute(e1, e2, centroid1=None, centroid2=None):
+    """Match score for a generated (CAD) puzzle edge pair.
+
+    centroid1/centroid2: see real_edge_compute.
+    """
+    s1 = _offset_shape_for(e1, centroid1)
+    s2 = _offset_shape_for(e2, centroid2)
+
+    L1 = _arc_length(s1)
+    L2 = _arc_length(s2)
     if abs(L1 - L2) / max(L1, L2, 1.0) > 0.20:
         return float("inf")
 
-    return _edge_curvature_score(e1, e2) + _type_priority_offset(e1, e2)
+    return _edge_curvature_score(s1, s2) + _type_priority_offset(e1, e2)
 
 def _resample_curve(points, n_points=100):
     """
