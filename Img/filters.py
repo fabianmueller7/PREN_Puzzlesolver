@@ -429,7 +429,7 @@ def my_find_corner_signature(cnt, green=False):
         # Build list of permutations of 4 points
         combs = itertools.permutations(extr, 4)
         combs_l = list(combs)
-        OFFSET_LOW = len(relative_angles) / 8
+        OFFSET_LOW = len(relative_angles) / 10
         OFFSET_HIGH = len(relative_angles) / 2.0
         for icomb, comb in enumerate(combs_l):
             if (
@@ -491,6 +491,8 @@ def my_find_corner_signature(cnt, green=False):
             break
 
     if len(types_pieces) == 0:
+        print(f"[corner-detect] FAILED — no valid 4-corner combination found after sigma={sigma-1} "
+              f"(contour len={len(cnt)}, OFFSET_LOW={len(relative_angles)/10:.0f})")
         return None, None, None
 
     if types_pieces[-1] == TypeEdge.UNDEFINED:
