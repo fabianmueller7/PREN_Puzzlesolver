@@ -317,21 +317,16 @@ def type_peak(peaks_pos_inside, peaks_neg_inside):
     return TypeEdge.UNDEFINED
 
 
-def _reclassify_undefined(t, pos_in, neg_in, segment_angles=None):
+def _reclassify_undefined(t, pos_in, neg_in, segment_angles=None, flat_threshold=0.05):
     """
     Permissive fallback for edges that type_peak left as UNDEFINED.
     Used as a post-loop reclassification step for round/smooth features
     whose single broad peak doesn't satisfy the strict 2-nested-peaks rule.
 
-    :param segment_angles: Optional slice of normalized relative_angles for this edge.
-                           When provided, used to guard against misclassifying slightly
-                           rounded border edges as HEAD/HOLE.
+    :param segment_angles: Optional slice of the angle signal for this edge.
+    :param flat_threshold: Amplitude below which a single-polarity segment is BORDER.
+                           Pass (FLAT_BORDER_FRACTION * max_seg_amp) for a relative cutoff.
     """
-    # Threshold: max abs amplitude below which a single-polarity segment is BORDER.
-    # The signal is L2-normalized over the whole contour, so a flat/rounded border
-    # contributes very little energy while a real connector has significant amplitude.
-    FLAT_BORDER_THRESHOLD = 0.05
-
     if t != TypeEdge.UNDEFINED:
         return t
     # Round feature: >=1 peak of one polarity nested inside the other
@@ -340,20 +335,18 @@ def _reclassify_undefined(t, pos_in, neg_in, segment_angles=None):
     if len(peaks_inside(neg_in, pos_in)) >= 1:
         return TypeEdge.HEAD
     # Only one polarity present – check amplitude before committing to HEAD/HOLE.
-    # A slightly curved border edge can produce a single spurious peak; if the
-    # signal energy in the segment is too low it is BORDER, not a real connector.
     if len(pos_in) > 0 and len(neg_in) == 0:
         if segment_angles is not None:
             amp = np.max(np.abs(segment_angles))
-            print(f"[reclassify] single-pos peak, max_amp={amp:.4f}, threshold={FLAT_BORDER_THRESHOLD}")
-            if amp < FLAT_BORDER_THRESHOLD:
+            print(f"[reclassify] single-pos peak, max_amp={amp:.4f}, threshold={flat_threshold:.4f}")
+            if amp < flat_threshold:
                 return TypeEdge.BORDER
         return TypeEdge.HEAD
     if len(neg_in) > 0 and len(pos_in) == 0:
         if segment_angles is not None:
             amp = np.max(np.abs(segment_angles))
-            print(f"[reclassify] single-neg peak, max_amp={amp:.4f}, threshold={FLAT_BORDER_THRESHOLD}")
-            if amp < FLAT_BORDER_THRESHOLD:
+            print(f"[reclassify] single-neg peak, max_amp={amp:.4f}, threshold={flat_threshold:.4f}")
+            if amp < flat_threshold:
                 return TypeEdge.BORDER
         return TypeEdge.HOLE
     return TypeEdge.UNDEFINED
@@ -381,7 +374,7 @@ def my_find_corner_signature(cnt, green=False):
     max_sigma = 12
     if not green:
         sigma = 5
-        max_sigma = 15
+        max_sigma = 20
     while sigma <= max_sigma:
         print("Smooth curve with sigma={}...".format(sigma))
 
@@ -462,6 +455,7 @@ def my_find_corner_signature(cnt, green=False):
                     tmp_combs_final.append((comb[3], comb[2], comb[1], comb[0]))
         sigma += 1
         if len(tmp_combs_final) == 0:
+            print(f"  [corner-detect] sigma={sigma-1}: no combo found — pos_peaks={len(extr)}, neg_peaks={len(extr_inverse)}")
             continue
 
         best_fit = tmp_combs_final[
@@ -503,24 +497,72 @@ def my_find_corner_signature(cnt, green=False):
         print("UNDEFINED FOUND - try to continue but something bad happened :(")
         print(tmp_types_pieces[-1])
 
-    # Post-loop reclassification: resolve any remaining UNDEFINED edges using
-    # permissive fallbacks for round/smooth features. This runs after the sigma
-    # loop so it does not affect the loop's no_undefined break condition (which
-    # controls how far sigma escalates for accurate corner placement).
-    best_combs = [
-        [0, best_fit[0]],
-        [best_fit[0], best_fit[1]],
-        [best_fit[1], best_fit[2]],
-        [best_fit[2], best_fit[3]],
+    # Re-classify edge types at a fixed low sigma using the corner positions found above.
+    # The sigma loop may have needed a high sigma to locate corners, which smooths away
+    # connector peaks and makes everything look BORDER. Re-running type detection at
+    # sigma=5 (where connector peaks are still visible) gives correct HOLE/HEAD/BORDER.
+    # A relative amplitude threshold prevents noise peaks on flat border edges from being
+    # misclassified as connectors.
+    _RECLASS_SIGMA = 5
+    _RECLASS_MPH   = 0.15   # lower than main loop (0.3) to catch subtle connector peaks
+    _BORDER_FRAC   = 0.15   # segment must be >= 15% of strongest segment to count as connector
+
+    _cnt_pts = [c[0] for c in cnt]
+    _la = np.array(get_relative_angles(np.array(_cnt_pts), export=False, sigma=_RECLASS_SIGMA))
+    _la_r  = np.roll(_la,  offset)
+    _la_ri = -_la_r
+    # Detect peaks on the raw signal (same approach as the sigma loop).
+    _mph_p = _RECLASS_MPH * float(np.max(_la_r))  if np.max(_la_r)  > 0 else 1e-6
+    _mph_n = _RECLASS_MPH * float(np.max(_la_ri)) if np.max(_la_ri) > 0 else 1e-6
+    _ep  = detect_peaks(_la_r,  mph=_mph_p)
+    _en  = detect_peaks(_la_ri, mph=_mph_n)
+    # L2-normalise before amplitude comparisons — exactly as the sigma loop does.
+    # After normalisation flat border edges contribute near-zero energy while real
+    # connectors remain significant, making _BORDER_FRAC a reliable relative cutoff.
+    _la_r_norm = normalized(_la_r[:, np.newaxis], axis=0).ravel()
+
+    _segs = [
+        [0,              int(best_fit[0])],
+        [int(best_fit[0]), int(best_fit[1])],
+        [int(best_fit[1]), int(best_fit[2])],
+        [int(best_fit[2]), int(best_fit[3])],
     ]
-    for i, (t, seg) in enumerate(zip(types_pieces, best_combs)):
-        if t == TypeEdge.UNDEFINED:
-            pos_in = peaks_inside(seg, extr)
-            neg_in = peaks_inside(seg, extr_inverse)
-            pos_in.sort()
-            neg_in.sort()
-            seg_angles = relative_angles[seg[0]:seg[1]] if seg[1] > seg[0] else relative_angles[seg[0]:]
-            types_pieces[i] = _reclassify_undefined(t, pos_in, neg_in, segment_angles=seg_angles)
+    _seg_amps = [
+        float(np.max(np.abs(_la_r_norm[s[0]:s[1]]))) if s[1] > s[0]
+        else float(np.max(np.abs(_la_r_norm[s[0]:])))
+        for s in _segs
+    ]
+    _flat_thr = _BORDER_FRAC * (max(_seg_amps) if _seg_amps else 1.0)
+
+    _types_low = []
+    for _seg in _segs:
+        _pi = sorted(peaks_inside(_seg, _ep))
+        _ni = sorted(peaks_inside(_seg, _en))
+        _t = type_peak(_pi, _ni)
+        if _t == TypeEdge.UNDEFINED:
+            _sa = _la_r_norm[_seg[0]:_seg[1]] if _seg[1] > _seg[0] else _la_r_norm[_seg[0]:]
+            _t = _reclassify_undefined(_t, _pi, _ni, segment_angles=_sa, flat_threshold=_flat_thr)
+        _types_low.append(_t)
+
+    if TypeEdge.UNDEFINED not in _types_low:
+        types_pieces = _types_low
+    else:
+        # Low-sigma reclassification left some UNDEFINED; fall back to post-loop fix
+        # on the sigma-loop result so we always produce 4 typed edges.
+        best_combs = [
+            [0, best_fit[0]],
+            [best_fit[0], best_fit[1]],
+            [best_fit[1], best_fit[2]],
+            [best_fit[2], best_fit[3]],
+        ]
+        for i, (t, seg) in enumerate(zip(types_pieces, best_combs)):
+            if t == TypeEdge.UNDEFINED:
+                pos_in = peaks_inside(seg, extr)
+                neg_in = peaks_inside(seg, extr_inverse)
+                pos_in.sort()
+                neg_in.sort()
+                seg_angles = relative_angles[seg[0]:seg[1]] if seg[1] > seg[0] else relative_angles[seg[0]:]
+                types_pieces[i] = _reclassify_undefined(t, pos_in, neg_in, segment_angles=seg_angles)
 
     best_fit_tmp = best_fit - offset
     for i in range(3):
