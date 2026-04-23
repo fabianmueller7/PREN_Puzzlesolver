@@ -503,9 +503,10 @@ def my_find_corner_signature(cnt, green=False):
     # sigma=5 (where connector peaks are still visible) gives correct HOLE/HEAD/BORDER.
     # A relative amplitude threshold prevents noise peaks on flat border edges from being
     # misclassified as connectors.
-    _RECLASS_SIGMA = 5
-    _RECLASS_MPH   = 0.15   # lower than main loop (0.3) to catch subtle connector peaks
-    _BORDER_FRAC   = 0.15   # segment must be >= 15% of strongest segment to count as connector
+    _RECLASS_SIGMA      = 5
+    _RECLASS_MPH        = 0.15   # lower than main loop (0.3) to catch subtle connector peaks
+    _BORDER_FRAC        = 0.15   # segment must be >= 15% of strongest segment to count as connector
+    _CORNER_MARGIN_FRAC = 0.10   # peaks within 10% of segment boundary are corner bleed, not connectors
 
     _cnt_pts = [c[0] for c in cnt]
     _la = np.array(get_relative_angles(np.array(_cnt_pts), export=False, sigma=_RECLASS_SIGMA))
@@ -536,8 +537,13 @@ def my_find_corner_signature(cnt, green=False):
 
     _types_low = []
     for _seg in _segs:
-        _pi = sorted(peaks_inside(_seg, _ep))
-        _ni = sorted(peaks_inside(_seg, _en))
+        _pi_all = sorted(peaks_inside(_seg, _ep))
+        _ni_all = sorted(peaks_inside(_seg, _en))
+        # Strip peaks within the corner margin — those are rounded-corner bleed, not connectors.
+        _seg_len = max(_seg[1] - _seg[0], 1)
+        _margin  = max(3, int(_CORNER_MARGIN_FRAC * _seg_len))
+        _pi = [p for p in _pi_all if (p - _seg[0]) > _margin and (_seg[1] - p) > _margin]
+        _ni = [p for p in _ni_all if (p - _seg[0]) > _margin and (_seg[1] - p) > _margin]
         _t = type_peak(_pi, _ni)
         if _t == TypeEdge.UNDEFINED:
             _sa = _la_r_norm[_seg[0]:_seg[1]] if _seg[1] > _seg[0] else _la_r_norm[_seg[0]:]
