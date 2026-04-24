@@ -72,8 +72,11 @@ class Edge:
 
     def is_compatible(self, e2, relaxed=False):
         """BORDER edges cannot match anything. All other pairs are allowed;
-        type priority is encoded in the distance score."""
-        return (
-            self.type  != TypeEdge.BORDER and
-            e2.type    != TypeEdge.BORDER
-        )
+        type priority is encoded in the distance score.
+        Updated: BORDER edges are compatible only with other BORDER edges.
+        Non-BORDER edges are compatible only with other Non-BORDER edges.
+        """
+        if self.type == TypeEdge.BORDER:
+            return e2.type == TypeEdge.BORDER
+        else: # self.type is HEAD, HOLE, or UNDEFINED
+            return e2.type != TypeEdge.BORDER

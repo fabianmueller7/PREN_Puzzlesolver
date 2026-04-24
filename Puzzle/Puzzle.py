@@ -3,9 +3,8 @@ import numpy as np
 import os
 import sys
 import config
-#uncomment as soon as alternative solver is ready
-#import math
-
+import math
+import threading
 from .Distance import real_edge_compute, generated_edge_compute
 from .Extractor import Extractor, show_image
 from .Mover import stick_pieces
@@ -31,10 +30,6 @@ from .tuple_helper import (
     display_dim,
 )
 
-#uncomment as soon as alternative solver is ready
-#import threading
-#from .alternative_solver import AlternativeSolver
-
 
 class Puzzle:
     """
@@ -56,6 +51,10 @@ class Puzzle:
             self.extract = Extractor(path, viewer, green_screen, factor)
             self.pieces_ = self.extract.extract()
 
+        # Apply EDGE_OFFSET to piece geometry for mechanical gap compensation
+        for piece in self.pieces_:
+            piece.apply_edge_offset(config.EDGE_OFFSET)
+
         self.border_pieces = [p for p in self.pieces_ if p.is_border]
         self.non_border_pieces = [p for p in self.pieces_ if not p.is_border]
         self.viewer = viewer
@@ -71,16 +70,6 @@ class Puzzle:
 
     def solve_puzzle(self):
         self.log(">>> START solving puzzle")
-
-        # Start the alternative solver concurrently. It will analyze the
-        # already-extracted pieces and store results in `self.alt_results`.
-        #try:
-        ##    alt = AlternativeSolver(self)
-        ##    t = threading.Thread(target=alt.run, daemon=True)
-        #    t.start()
-        #except Exception:
-            # Non critical: if the alternative solver fails to start, continue
-        #    self.log("Alt solver failed to start; continuing with main solver")
 
         # Separate border pieces from the other
         connected_pieces = []
@@ -143,6 +132,26 @@ class Puzzle:
         self.log(">>> SAVING result...")
         self.translate_puzzle()
         self.export_pieces(os.path.join(os.environ["ZOLVER_TEMP_DIR"], "stick.png"), os.path.join(os.environ["ZOLVER_TEMP_DIR"], "colored.png"), display=False)
+
+        # Start the alternative solver concurrently (after main solver completes)
+        try:
+            from .alternative_solver import AlternativeSolver
+            import queue
+            alt_queue = queue.Queue()
+            alt = AlternativeSolver(self, alt_queue)
+            alt.start()
+        except Exception:
+            self.log("Alt solver failed to start")
+
+        # Start the LEGO solver concurrently (after main solver completes)
+        try:
+            from .lego_solver import LegoSolver
+            import queue
+            lego_queue = queue.Queue()
+            lego = LegoSolver(self, lego_queue)
+            lego.start()
+        except Exception:
+            self.log("LEGO solver failed to start")
 
         # Two sets of pieces: Already connected ones and pieces remaining to connect to the others
         # The first piece has an orientation like that:
@@ -637,11 +646,11 @@ class Puzzle:
             if config.DEBUG_FILE_OUTPUT == 1:
                 # Contours
                 for e in piece.edges_:
-                    for y, x in e.shape:
-                        y, x = y - minY, x - minX
+                    for y_float, x_float in e.shape:
+                        y, x = int(y_float - minY), int(x_float - minX)
                         if (
-                                0 <= y < border_img.shape[1]
-                                and 0 <= x < border_img.shape[0]
+                                0 <= y < border_img.shape[1] # Check bounds with integer y
+                                and 0 <= x < border_img.shape[0] # Check bounds with integer x
                         ):
                             rgb = (0, 0, 0)
                             if e.type == TypeEdge.HOLE:

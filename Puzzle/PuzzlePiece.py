@@ -88,3 +88,15 @@ class PuzzlePiece:
             ):
                 return True
         return False
+
+    def apply_edge_offset(self, offset_px):
+        """
+        Permanently expand all edges of the piece outward by offset_px.
+        This compensates for physical gaps or mechanical inaccuracies.
+        """
+        if offset_px <= 0:
+            return
+        center = self.get_center()  # (x, y)
+        centroid_yx = (center[1], center[0])
+        for edge in self.edges_:
+            edge.shape = edge.compute_offset_shape(offset_px, centroid_yx)

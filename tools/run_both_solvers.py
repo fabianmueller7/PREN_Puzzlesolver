@@ -16,9 +16,8 @@ import json
 import os
 import queue
 import sys
-import tempfile
 import time
-import atexit
+import subprocess
 
 # Make the package importable when running this script from the repository root.
 # Ensure the PREN_Puzzlesolver package folder (the parent of this tools/ folder)
@@ -41,7 +40,7 @@ def main():
         help='Path to puzzle image (relative to PREN_Puzzlesolver root). Note: The default image path may not exist in all setups.'
     )
     parser.add_argument('--wait-alt-seconds', type=float, default=30.0, help='Seconds to wait for alternative solver results after main solver completes')
-    parser.add_argument('--open', action='store_true', help='Open output images and JSON with the OS default application')
+    parser.add_argument('--open', action='store_true', help='Open output folder with the OS default application')
     args = parser.parse_args()
 
     img_path = os.path.abspath(args.image)
@@ -51,12 +50,17 @@ def main():
         print("Example: --image resources/jigsaw-samples/Test-erweitert.png")
         return
 
-    # Prepare temporary directory and env var used by the solver
-    temp_dir = tempfile.TemporaryDirectory()
-    os.environ['ZOLVER_TEMP_DIR'] = temp_dir.name
-    atexit.register(temp_dir.cleanup)
+    # Create timestamped debug output directory (same as alternative solver)
+    debug_base = os.path.join(REPO_ROOT, 'debug_output')
+    os.makedirs(debug_base, exist_ok=True)
+    
+    timestamp = time.strftime("%Y%m%d_%H%M%S")
+    debug_dir = os.path.join(debug_base, f'alt_solver_{timestamp}')
+    os.makedirs(debug_dir, exist_ok=True)
+    
+    os.environ['ZOLVER_TEMP_DIR'] = debug_dir
 
-    print('Temporary folder:', temp_dir.name)
+    print('Debug output folder:', debug_dir)
     print('Starting Puzzle on image:', img_path)
 
     # Construct puzzle and run solver (this will run the alternative solver in background)
@@ -90,7 +94,7 @@ def main():
 
     if hasattr(puzzle, 'alt_results'):
         alt = puzzle.alt_results
-        out_json = os.path.join(temp_dir.name, 'alt_results.json')
+        out_json = os.path.join(debug_dir, 'alt_results.json')
         try:
             with open(out_json, 'w', encoding='utf-8') as f:
                 json.dump(alt, f, indent=2, default=str)
@@ -112,19 +116,17 @@ def main():
     else:
         print(f'No alt_results after {args.wait_alt_seconds} seconds.')
 
-    # Optionally open alt_results.json if requested
-    if hasattr(puzzle, 'alt_results') and args.open:
+    # Optionally open debug output folder if requested
+    if args.open:
         try:
             if sys.platform.startswith('win'):
-                os.startfile(out_json)
+                os.startfile(debug_dir)
             elif sys.platform.startswith('darwin'):
-                import subprocess
-                subprocess.run(['open', out_json])
+                subprocess.run(['open', debug_dir])
             else:
-                import subprocess
-                subprocess.run(['xdg-open', out_json])
-        except Exception:
-            pass
+                subprocess.run(['xdg-open', debug_dir])
+        except Exception as e:
+            print(f'Could not open folder: {e}')
 
 
 if __name__ == '__main__':
