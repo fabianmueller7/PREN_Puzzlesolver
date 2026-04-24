@@ -357,7 +357,7 @@ class Puzzle:
             "Fail to solve the puzzle with", self.strategy, "falling back to", strat
         )
         old_strat = self.strategy
-        self.strategy = Strategy.NAIVE
+        self.strategy = strat
         best_bloc_e, best_e = self.best_diff(diff, connected_direction, left_piece)
         self.strategy = old_strat
         return best_bloc_e, best_e
@@ -374,6 +374,7 @@ class Puzzle:
 
         best_bloc_e, best_e, _best_p, min_diff = None, None, None, float("inf")
         minX, minY, maxX, maxY = self.extremum
+        occupied = {coord for coord, _ in connected_direction}
 
         if self.strategy == Strategy.FILL:
             best_coords = []
@@ -383,6 +384,8 @@ class Puzzle:
                 best_coord = []
                 for x in range(minX, maxX + 1):
                     for y in range(minY, maxY + 1):
+                        if (x, y) in occupied:
+                            continue
                         neighbor = list(
                             filter(
                                 lambda e: is_neighbor(
@@ -442,6 +445,8 @@ class Puzzle:
             best_coord = []
             for x in range(minX, maxX + 1):
                 for y in range(minY, maxY + 1):
+                    if (x, y) in occupied:
+                        continue
                     neighbor = list(
                         filter(
                             lambda e: is_neighbor((x, y), e[0], connected_direction),
