@@ -4,7 +4,7 @@ import os
 import sys
 import config
 #uncomment as soon as alternative solver is ready
-#import math
+import math
 
 from .Distance import real_edge_compute, generated_edge_compute
 from .Extractor import Extractor, show_image
@@ -117,20 +117,16 @@ class Puzzle:
                 and start_piece.edge_in_direction(Directions.W).connected
             ):
                 break
-            # rotate logical edge directions (clockwise by 90°)
+            # Rotate logical edge directions AND the real geometry/pixels.
+            # Without rotating the geometry, the solver places pieces by the
+            # updated directions while the visible contours stay unrotated.
             start_piece.rotate_edges(1)
-            #uncomment as soon as alternative solver is ready
-            # rotate actual geometry (edge shapes + piece pixels) to match the
-            # updated directions so the first piece is really placed in the
-            # chosen corner orientation (rotate 90° clockwise)
-            #angle = - (math.pi / 2)  # radians, negative = clockwise
-            #center = start_piece.get_center()
-            #for edge in start_piece.edges_:
-            #    for idx, pt in enumerate(edge.shape):
-            #        edge.shape[idx] = rotate(pt, angle, center)
-            # rotate piece pixels as well
-            #start_piece.rotate(angle, center)
-            #rotation_count += 1
+            angle = -(math.pi / 2)  # radians, negative = clockwise
+            center = start_piece.get_center()
+            for edge in start_piece.edges_:
+                for idx, pt in enumerate(edge.shape):
+                    edge.shape[idx] = rotate(pt, angle, center)
+            start_piece.rotate(angle, center)
 
         self.extremum = (0, 0, 1, 1)
 
@@ -229,12 +225,6 @@ class Puzzle:
             if block_best_e is None or best_e is None:
                 self.log("No match found — solver cannot continue")
                 break
-
-            # Winkel vom Edge aufs Piece übertragen
-            try:
-                self.edge_to_piece[best_e].rotation_angle = getattr(best_e, "rotation_angle", 0)
-            except Exception:
-                pass
 
             block_best_p, best_p = (
                 self.edge_to_piece[block_best_e],
@@ -659,22 +649,6 @@ class Puzzle:
                 list(map(lambda e: e[2], tmp)),
             )
             colored_img[x, y] = c
-
-            # ---- Rotation des Puzzleteils anwenden (visuell) ----
-            if hasattr(piece, "rotation_angle") and piece.rotation_angle != 0:
-                h, w = colored_img.shape[:2]
-                # Erzeuge eine leere Maske für das aktuelle Teil
-                mask = np.zeros_like(colored_img)
-                mask[x, y] = c
-
-                # Rotationsmatrix um den Mittelpunkt des Gesamtbilds
-                M = cv2.getRotationMatrix2D((w // 2, h // 2), float(piece.rotation_angle), 1.0)
-                mask = cv2.warpAffine(mask, M, (w, h),
-                                    flags=cv2.INTER_LINEAR,
-                                    borderMode=cv2.BORDER_CONSTANT,
-                                    borderValue=(0, 0, 0))
-                colored_img = np.maximum(colored_img, mask)
-            # ------------------------------------------------------
 
 
             if config.DEBUG_FILE_OUTPUT == 1:

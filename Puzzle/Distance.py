@@ -366,7 +366,14 @@ def real_edge_compute(e1, e2, centroid1=None, centroid2=None):
     if abs(L1 - L2) / max(L1, L2, 1.0) > 0.20:
         return float("inf")
 
-    # 2. Curvature-profile score + type-priority offset
+    # 2. Chord-length filter: reject if straight endpoint-to-endpoint distance
+    #    differs by more than 15% — catches mismatches between wide and narrow edges
+    #    even when their connector shapes look similar.
+    if len(s1) >= 2 and len(s2) >= 2:
+        if not have_edges_similar_length(tuple(s1[0]), tuple(s1[-1]), tuple(s2[0]), tuple(s2[-1]), 0.15):
+            return float("inf")
+
+    # 3. Curvature-profile score + type-priority offset
     return _edge_curvature_score(s1, s2) + _type_priority_offset(e1, e2)
 
 
@@ -382,6 +389,13 @@ def generated_edge_compute(e1, e2, centroid1=None, centroid2=None):
     L2 = _arc_length(s2)
     if abs(L1 - L2) / max(L1, L2, 1.0) > 0.20:
         return float("inf")
+
+    # Chord-length filter: reject if straight endpoint-to-endpoint distance
+    # differs by more than 15% — catches mismatches between wide and narrow edges
+    # even when their connector shapes look similar.
+    if len(s1) >= 2 and len(s2) >= 2:
+        if not have_edges_similar_length(tuple(s1[0]), tuple(s1[-1]), tuple(s2[0]), tuple(s2[-1]), 0.15):
+            return float("inf")
 
     return _edge_curvature_score(s1, s2) + _type_priority_offset(e1, e2)
 
