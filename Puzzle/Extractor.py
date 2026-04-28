@@ -56,7 +56,7 @@ class Extractor:
 
     def _save_temp(self, filename, img):
         try:
-            cv2.imwrite(os.path.join(self.temp_dir, filename), img)
+            config.save_debug_img(os.path.join(self.temp_dir, filename), img)
         except Exception as e:
             print("Failed to write temp image:", filename, e)
 

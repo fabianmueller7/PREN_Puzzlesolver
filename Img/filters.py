@@ -769,9 +769,9 @@ def export_contours(
                     max_width * (index % modulo) + image.shape[1]
                 ),
             ] = image
-        cv2.imwrite(path, pieces_img)
+        config.save_debug_img(path, pieces_img)
     if viewer:
-        cv2.imwrite(os.path.join(os.environ["ZOLVER_TEMP_DIR"], "color_border.png"), out_color)
+        config.save_debug_img(os.path.join(os.environ["ZOLVER_TEMP_DIR"], "color_border.png"), out_color)
         viewer.addImage("Extracted colored border", os.path.join(os.environ["ZOLVER_TEMP_DIR"], "color_border.png"))
 
     return puzzle_pieces
@@ -899,7 +899,7 @@ def export_contours_without_colormatching(
                            _corner_colors[j % 4], -1)
                 cv2.putText(_corner_canvas, str(j), (int(pt[0]) + 6, int(pt[1]) - 6),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-        cv2.imwrite(
+        config.save_debug_img(
             os.path.join(os.environ["ZOLVER_TEMP_DIR"], "corners_vis.png"),
             _corner_canvas,
         )
@@ -960,6 +960,6 @@ def export_contours_without_colormatching(
                 (max_height * int(index / modulo)):(max_height * int(index / modulo) + image.shape[0]),
                 (max_width * (index % modulo)):(max_width * (index % modulo) + image.shape[1]),
             ] = image
-        cv2.imwrite(path, pieces_img)
+        config.save_debug_img(path, pieces_img)
 
     return puzzle_pieces

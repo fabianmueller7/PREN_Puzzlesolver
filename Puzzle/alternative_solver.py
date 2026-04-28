@@ -354,8 +354,8 @@ class AlternativeSolver(threading.Thread):
                         cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 1, cv2.LINE_AA)
 
         out = self._debug_dir()
-        cv2.imwrite(os.path.join(out, "alt_edges.png"), edge_img)
-        cv2.imwrite(os.path.join(out, "alt_solution.png"), solution_img)
+        config.save_debug_img(os.path.join(out, "alt_edges.png"), edge_img)
+        config.save_debug_img(os.path.join(out, "alt_solution.png"), solution_img)
         print(f"[AlternativeSolver] debug images saved to {out}/alt_edges.png and alt_solution.png")
 
     # ----------------------------------------------------------------------

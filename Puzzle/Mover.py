@@ -73,22 +73,32 @@ def stick_pieces(bloc_e, p, e, final_stick=False, centroid_bloc=None, centroid_c
         # Rotation origin (row, col order as used by rotate())
         b_e0, b_e1 = float(rot_center[0]), float(rot_center[1])
 
-        total_t = np.add(translation, correction_int)
-        p.translate(int(total_t[1]), int(total_t[0]))
+        # Edges are: translate → rotate → apply correction_int.
+        # Pixels must follow the same order: translate first (no correction yet),
+        # then rotate, then shift target range by correction as a post-rotation
+        # translation.  Folding correction into the pre-rotation translate would
+        # produce a (I-R)*correction_int positional error for any non-zero angle.
+        p.translate(int(translation[1]), int(translation[0]))
 
-        # Bounding boxes of origin/target space
+        # correction in pixel (col, row) space — edges store (row, col) so swap
+        corr_col = int(correction_int[1])
+        corr_row = int(correction_int[0])
+
+        # Bounding boxes of origin/target space (target shifted by post-rotation correction)
         minX, minY, maxX, maxY = p.get_bbox()
         minX2, minY2, maxX2, maxY2 = p.rotate_bbox(angle, (b_e1, b_e0))
+        minX2 += corr_col;  maxX2 += corr_col
+        minY2 += corr_row;  maxY2 += corr_row
 
         # Recreate image from pixels
         img_p = p.get_image()
 
-        # Retrieve new pixels by rotated target space into origin space
+        # Retrieve new pixels by rotated target space into origin space.
+        # Strip the post-rotation correction before rotating back.
         pixels = {}
         for px in range(minX2, maxX2 + 1):
             for py in range(minY2, maxY2 + 1):
-                # Rotate back to origin space
-                qx, qy = rotate((px, py), -angle, (b_e1, b_e0))
+                qx, qy = rotate((px - corr_col, py - corr_row), -angle, (b_e1, b_e0))
                 qx, qy = int(qx), int(qy)
                 if (
                     minX <= qx <= maxX

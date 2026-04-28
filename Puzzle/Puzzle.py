@@ -72,6 +72,13 @@ class Puzzle:
     def solve_puzzle(self):
         self.log(">>> START solving puzzle")
 
+        if config.DEBUG_PIECE_CENTERS == 1:
+            def _pixel_center(p):
+                xs = [px for (px, _) in p.pixels]
+                ys = [py for (_, py) in p.pixels]
+                return (int(np.mean(xs)), int(np.mean(ys)))
+            _start_centers = {id(p): _pixel_center(p) for p in self.pieces_}
+
         # Start the alternative solver concurrently. It will analyze the
         # already-extracted pieces and store results in `self.alt_results`.
         #try:
@@ -139,6 +146,23 @@ class Puzzle:
         self.log(">>> SAVING result...")
         self.translate_puzzle()
         self.export_pieces(os.path.join(os.environ["ZOLVER_TEMP_DIR"], "stick.png"), os.path.join(os.environ["ZOLVER_TEMP_DIR"], "colored.png"), display=False)
+
+        if config.DEBUG_PIECE_CENTERS == 1:
+            import json
+            records = []
+            for i, p in enumerate(self.pieces_):
+                sc = _start_centers[id(p)]
+                ec = _pixel_center(p)
+                records.append({
+                    "piece_index": i,
+                    "grid_coord": list(p.coord) if hasattr(p, "coord") else None,
+                    "start_center": [int(sc[0]), int(sc[1])],
+                    "end_center": [int(ec[0]), int(ec[1])],
+                })
+            out_path = os.path.join(os.environ.get("ZOLVER_TEMP_DIR", "debug_output"), "piece_centers.json")
+            with open(out_path, "w") as f:
+                json.dump(records, f, indent=2)
+            self.log("Piece centers saved to", out_path)
 
         # Two sets of pieces: Already connected ones and pieces remaining to connect to the others
         # The first piece has an orientation like that:
@@ -446,50 +470,55 @@ class Puzzle:
                     if len(neighbor) == 1:
                         best_coord.append(((x, y), neighbor[0]))
                     elif len(neighbor) >= 2 and len(left_piece) == 1:
-                        # Last remaining piece: position may be surrounded by 2 or 3
-                        # already-placed neighbours (e.g. the centre edge piece in a 2×3
-                        # grid).  Try every neighbour so that is_border_aligned can find
-                        # a valid anchor regardless of list order.
-                        for n in neighbor:
-                            best_coord.append(((x, y), n))
+                        # Last remaining piece: keep ALL neighbours grouped so every
+                        # rotation is scored against every constraint simultaneously.
+                        best_coord.append(((x, y), neighbor))
 
             for c, neighbor in best_coord:
+                # neighbor is either a single (coord, piece) tuple (normal case)
+                # or a list of such tuples (last piece with multiple constraints).
+                neighbors = neighbor if isinstance(neighbor, list) else [neighbor]
+
                 for p in left_piece:
                     for rotation in range(4):
-                        diff_score = 0
                         p.rotate_edges(1)
-                        block_c, block_p = neighbor
 
-                        direction_exposed = Directions(sub_tuple(c, block_c))
-                        edge_exposed = block_p.edge_in_direction(direction_exposed)
-                        edge = p.edge_in_direction(
-                            get_opposite_direction(direction_exposed)
-                        )
-
+                        # Position-level type checks (independent of which neighbour).
                         if p.type == TypePiece.ANGLE and (
                             not corner_puzzle_alignment(c, self.corner_pos)
                             or not self.corner_place_fit_size(c)
                         ):
-                            diff_score = float("inf")
-                        if p.type == TypePiece.BORDER and self.is_edge_at_corner_place(
-                            c
-                        ):
-                            diff_score = float("inf")
-                        if (
-                            diff_score != 0
-                            or edge_exposed.connected
-                            or edge.connected
-                            or not edge.is_compatible(edge_exposed)
-                            or not p.is_border_aligned(block_p)
-                        ):
-                            diff_score = float("inf")
-                        else:
-                            diff_score = diff.get(edge_exposed, {}).get(edge, float("inf"))
+                            continue
+                        if p.type == TypePiece.BORDER and self.is_edge_at_corner_place(c):
+                            continue
 
-                        if diff_score < min_diff:
+                        # Accumulate diff score across ALL neighbours for this rotation.
+                        diff_score = 0
+                        last_pair = None, None
+                        for block_c, block_p in neighbors:
+                            direction_exposed = Directions(sub_tuple(c, block_c))
+                            edge_exposed = block_p.edge_in_direction(direction_exposed)
+                            edge = p.edge_in_direction(
+                                get_opposite_direction(direction_exposed)
+                            )
+                            if (
+                                edge_exposed.connected
+                                or edge.connected
+                                or not edge.is_compatible(edge_exposed)
+                                or not p.is_border_aligned(block_p)
+                            ):
+                                diff_score = float("inf")
+                                break
+                            d = diff.get(edge_exposed, {}).get(edge, float("inf"))
+                            diff_score += d
+                            if diff_score == float("inf"):
+                                break
+                            last_pair = edge_exposed, edge
+
+                        if diff_score < min_diff and last_pair[0] is not None:
                             best_bloc_e, best_e, min_diff = (
-                                edge_exposed,
-                                edge,
+                                last_pair[0],
+                                last_pair[1],
                                 diff_score,
                             )
             if best_e is None:
@@ -632,8 +661,8 @@ class Puzzle:
             return
 
         minX, minY, maxX, maxY = self.get_bbox()
-        colored_img = np.zeros((maxX - minX, maxY - minY, 3))
-        border_img = np.zeros((maxX - minX, maxY - minY, 3))
+        colored_img = np.zeros((maxX - minX + 1, maxY - minY + 1, 3))
+        border_img = np.zeros((maxX - minX + 1, maxY - minY + 1, 3))
 
         for piece in self.pieces_:
             # Reframe piece pixels to (0, 0)
@@ -745,12 +774,12 @@ class Puzzle:
                                 (lx + 4 + box_size + 6, y0 + box_size - 3),
                                 font, font_scale, (220, 220, 220), font_thickness, cv2.LINE_AA)
 
-                cv2.imwrite(path_contour, border_img)
+                config.save_debug_img(path_contour, border_img)
 
                 if config.DEBUG_SHOW_DIAGRAMS == 1:
                     show_image(border_img,"contour category image")
 
-            cv2.imwrite(path_colored, colored_img)
+            config.save_debug_img(path_colored, colored_img)
 
     def show_image(img, name="image"):
         """Helper for quick visual debugging (only used if PREPROCESS_DEBUG_MODE == 1)."""
