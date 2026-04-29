@@ -109,10 +109,11 @@ class Puzzle:
                 break
             start_piece.rotate_edges(1)
             angle = -(math.pi / 2)
-            center = start_piece.get_center()
+            center = start_piece.get_center()          # (center_row, center_col) — pixel space
+            edge_center = (center[1], center[0])       # (center_col, center_row) — edge shape space
             for edge in start_piece.edges_:
                 for idx, pt in enumerate(edge.shape):
-                    edge.shape[idx] = rotate(pt, angle, center)
+                    edge.shape[idx] = rotate(pt, angle, edge_center)
             start_piece.rotate(angle, center)
 
         self.extremum = (0, 0, 1, 1)
@@ -449,7 +450,16 @@ class Puzzle:
         if not (self.viewer and display):
             return
 
+        # e.shape stores (col, row) — col maps to the Y axis, row to the X axis.
         minX, minY, maxX, maxY = self.get_bbox()
+        edge_shapes = [e.shape for p in self.pieces_ for e in p.edges_ if len(e.shape) > 0]
+        if edge_shapes:
+            all_pts = np.concatenate(edge_shapes)
+            minY = min(minY, int(all_pts[:, 0].min()))
+            maxY = max(maxY, int(all_pts[:, 0].max()))
+            minX = min(minX, int(all_pts[:, 1].min()))
+            maxX = max(maxX, int(all_pts[:, 1].max()))
+
         colored_img = np.zeros((maxX - minX + 1, maxY - minY + 1, 3))
         border_img  = np.zeros((maxX - minX + 1, maxY - minY + 1, 3))
 
