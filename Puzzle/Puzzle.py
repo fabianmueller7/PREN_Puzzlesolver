@@ -73,6 +73,11 @@ class Puzzle:
     def solve_puzzle(self):
         self.log(">>> START solving puzzle")
 
+        if not self.pieces_:
+            self.log("ERROR: No pieces detected — corner detection failed for all contours.")
+            self.log("Try placing pieces so they don't touch each other, then re-scan.")
+            return
+
         if config.DEBUG_PIECE_CENTERS == 1:
             _start_centers = {id(p): self._pixel_center(p) for p in self.pieces_}
 
@@ -137,10 +142,13 @@ class Puzzle:
             for i, p in enumerate(self.pieces_):
                 sc = _start_centers[id(p)]
                 ec = self._pixel_center(p)
+                # _pixel_center returns (row, col); pixel_to_robot expects (col, row) = (x, y)
+                robot_start = config.pixel_to_robot(sc[1], sc[0])
                 records.append({
                     "piece_index": i,
                     "grid_coord": list(p.coord) if hasattr(p, "coord") else None,
-                    "start_center": [int(sc[0]), int(sc[1])],
+                    "start_center_px": [int(sc[1]), int(sc[0])],
+                    "start_center_robot_mm": list(robot_start),
                     "end_center":   [int(ec[0]), int(ec[1])],
                 })
             out_path = os.path.join(os.environ.get("ZOLVER_TEMP_DIR", "debug_output"), "piece_centers.json")
@@ -150,6 +158,8 @@ class Puzzle:
 
     def get_bbox(self):
         bboxes = [p.get_bbox() for p in self.pieces_]
+        if not bboxes:
+            return (0, 0, 0, 0)
         return (
             min(bbox[0] for bbox in bboxes),
             min(bbox[1] for bbox in bboxes),

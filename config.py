@@ -3,7 +3,24 @@ DEBUG_SHOW_DIAGRAMS = 0  # Shows matplotlib diagrams interactively (requires DEB
 DEBUG_ALT_SOLVER = 0     # Saves debug images for the alternative solver to debug_output/
 DEBUG_PIECE_CENTERS = 1  # Writes piece_centers.json to debug_output/ with each piece's start and end center point (0/0 is top left)
 
-EDGE_OFFSET = 12  # pixels (6 pixels ≈ 1mm) — shifts each edge outward to show the manufacturing tolerance band in debug output
+EDGE_OFFSET = 0  # pixels (6 pixels ≈ 1mm) — shifts each edge outward to show the manufacturing tolerance band in debug output
+
+# Affine calibration: maps camera pixel (px, py) → robot mm (rx, ry).
+# Robot zero is top-right; X increases to the left, Y increases downward.
+# Calibrated on Croped-Koordinatentest1.png (2145×1442) against 4 measured robot positions.
+#   robot_x = CAL_M[0][0]*px + CAL_M[0][1]*py + CAL_M[0][2]
+#   robot_y = CAL_M[1][0]*px + CAL_M[1][1]*py + CAL_M[1][2]
+CAL_M = [
+    [-0.143786,  0.004110, 314.2690],
+    [ 0.000689,  0.141544, 188.9530],
+]
+
+
+def pixel_to_robot(pixel_x, pixel_y):
+    """Convert image pixel coordinates to robot mm coordinates."""
+    rx = CAL_M[0][0] * pixel_x + CAL_M[0][1] * pixel_y + CAL_M[0][2]
+    ry = CAL_M[1][0] * pixel_x + CAL_M[1][1] * pixel_y + CAL_M[1][2]
+    return round(rx), round(ry)
 
 # A4 landscape at 150 DPI
 DEBUG_OUTPUT_W = 1782
