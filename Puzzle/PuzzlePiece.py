@@ -11,6 +11,8 @@ class PuzzlePiece:
     the list of pixels composing the piece, the number of borders and the type
     of the piece.
     """
+    initial_pixels = None
+    initial_edge_directions = {}
 
     def __init__(self, edges, pixels):
         self.position = (0, 0)
@@ -100,3 +102,18 @@ class PuzzlePiece:
         centroid_yx = (center[1], center[0])
         for edge in self.edges_:
             edge.shape = edge.compute_offset_shape(offset_px, centroid_yx)
+
+    def backup_initial_state(self):
+        """Store the current state of pixels and edges as the 'clean' state."""
+        self.initial_pixels = self.pixels.copy()
+        for i, e in enumerate(self.edges_):
+            e.backup_shape()
+            self.initial_edge_directions[i] = e.direction
+
+    def restore_initial_state(self):
+        """Reset the piece to its original pixels and edge geometry."""
+        if self.initial_pixels is not None:
+            self.pixels = self.initial_pixels.copy()
+        for i, e in enumerate(self.edges_):
+            e.restore_backup_shape()
+            e.direction = self.initial_edge_directions[i]
