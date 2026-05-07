@@ -7,4 +7,4 @@ EDGE_OFFSET = 11  # pixels (≈ 2 mm per edge side) — shifts each edge outward
 # Schwellenwert für Kanten-Matches. 
 # Werte unter 1000 stellen sicher, dass nur HEAD-HOLE Paarungen akzeptiert werden.
 # Ein niedrigerer Wert (z.B. 600) erhöht die Strenge bei der geometrischen Passform.
-MATCH_THRESHOLD = 600.0
+MATCH_THRESHOLD = 2.6

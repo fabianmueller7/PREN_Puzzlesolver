@@ -54,7 +54,7 @@ class Puzzle:
         # Apply EDGE_OFFSET to piece geometry for mechanical gap compensation
         for piece in self.pieces_:
             piece.apply_edge_offset(config.EDGE_OFFSET)
-            piece.backup_initial_state()
+            piece.backup_initial_state() # Store initial state after offset
 
         self.border_pieces = [p for p in self.pieces_ if p.is_border]
         self.non_border_pieces = [p for p in self.pieces_ if not p.is_border]
@@ -140,7 +140,8 @@ class Puzzle:
     def _finish_and_export(self):
         """Final steps to translate, save, and trigger secondary solvers."""
         self.log(">>> FINALIZING result...")
-        self._evaluate_final_edge_scores() # Added to evaluate and log final scores
+        # Versuche Fehler durch Neu-Platzierung zu beheben
+        self._attempt_local_fix(max_attempts=2)
         self.translate_puzzle()
         self.export_pieces(
             os.path.join(os.environ["ZOLVER_TEMP_DIR"], "stick.png"), 
@@ -594,8 +595,13 @@ class Puzzle:
         after the puzzle has been solved. This helps in diagnosing
         sub-optimal placements.
         """
-        self.log("\n>>> Final Edge Match Scores:")
+        self.log("\n>>> Evaluating Final Edge Match Scores...")
         evaluated_pairs = set()  # To avoid evaluating the same pair twice (e.g., A->B and B->A)
+        piece_quality = {} # piece_id -> list of scores
+        piece_corner_err = {} # piece_id -> list of corner distances
+        
+        # Dictionary to return for fix logic
+        piece_errors = {} 
 
         # Create a mapping from coordinates to pieces for efficient lookup
         coord_to_piece_map = {coord: piece for coord, piece in self.connected_directions}
@@ -603,6 +609,9 @@ class Puzzle:
         for (coord_p1, p1) in self.connected_directions:
             # Get a unique identifier for p1, e.g., its index in the original pieces list
             p1_id = self.pieces_.index(p1) if p1 in self.pieces_ else f"UnknownPiece@{id(p1)}"
+            if p1_id not in piece_quality:
+                piece_quality[p1_id] = []
+                piece_corner_err[p1_id] = []
 
             for e1 in p1.edges_:
                 if e1.connected:
@@ -618,6 +627,9 @@ class Puzzle:
 
                     # Get a unique identifier for p2
                     p2_id = self.pieces_.index(p2) if p2 in self.pieces_ else f"UnknownPiece@{id(p2)}"
+                    if p2_id not in piece_quality:
+                        piece_quality[p2_id] = []
+                        piece_corner_err[p2_id] = []
 
                     # Find the corresponding edge on the neighbor piece
                     e2 = p2.edge_in_direction(get_opposite_direction(e1.direction))
@@ -629,10 +641,127 @@ class Puzzle:
                     evaluated_pairs.add(pair_key)
 
                     score = real_edge_compute(e1, e2) if self.green_ else generated_edge_compute(e1, e2)
-                    
-                    self.log(f"  Piece {p1_id} ({coord_p1}) {e1.direction.name} <-> Piece {p2_id} ({neighbor_coord}) {e2.direction.name}: Score = {score:.2f}")
+
+                    # Berechne die Distanz zwischen den korrespondierenden Eckpunkten
+                    # Da Kanten "face-to-face" liegen, trifft e1[Anfang] auf e2[Ende] und vice versa
+                    dist_a = np.linalg.norm(np.array(e1.shape[0]) - np.array(e2.shape[-1]))
+                    dist_b = np.linalg.norm(np.array(e1.shape[-1]) - np.array(e2.shape[0]))
+                    avg_corner_dist = (dist_a + dist_b) / 2.0
+
+                    piece_quality[p1_id].append(score)
+                    piece_quality[p2_id].append(score)
+                    piece_corner_err[p1_id].append(avg_corner_dist)
+                    piece_corner_err[p2_id].append(avg_corner_dist)
+
+                    self.log(f"  Piece {p1_id} ({coord_p1}) {e1.direction.name} <-> Piece {p2_id} ({neighbor_coord}) {e2.direction.name}: Score = {score:.2f}, Corner-Gap = {avg_corner_dist:.2f}px")
+
+        # Output a summary per piece to identify the 'bad' ones
+        self.log("\n>>> Quality Summary by Piece:")
+        threshold = getattr(config, 'MATCH_THRESHOLD', 600.0)
+        suspicious = []
+        for p_id, scores in piece_quality.items():
+            if not scores: continue
+            avg_score = sum(scores) / len(scores)
+            max_score = max(scores)
+            avg_corner = sum(piece_corner_err[p_id]) / len(piece_corner_err[p_id]) if piece_corner_err[p_id] else 0.0
+            
+            # Ein Teil ist verdächtig, wenn der Score zu hoch ODER die Ecken zu weit auseinander sind
+            is_bad = max_score >= threshold or avg_corner > 30.0
+            status = "OK" if not is_bad else "BAD MATCH ❌"
+            
+            if status != "OK": suspicious.append(p_id)
+            
+            piece_errors[p_id] = {'max_score': max_score, 'avg_corner_err': avg_corner}
+            self.log(f"  Piece {p_id:2}: Score-Max={max_score:6.2f}, Corner-Err-Avg={avg_corner:5.2f}px -> {status}")
+        
+        if suspicious:
+            self.log(f"\nPotential errors detected in pieces: {suspicious}")
 
         self.log(">>> End Final Edge Match Scores\n")
+        return suspicious, piece_errors
+
+    def _unplace_piece(self, p_id):
+        """Entnimmt ein Teil aus der Platzierungsliste und setzt seine Verbindungen zurück."""
+        piece_to_remove = self.pieces_[p_id]
+        
+        removed_coord = None
+        for coord, p in self.connected_directions:
+            if p == piece_to_remove:
+                removed_coord = coord
+                break
+
+        self.log(f"  Unplacing Piece {p_id} at {removed_coord}...")
+        
+        # Aus connected_directions entfernen
+        self.connected_directions = [item for item in self.connected_directions if item[1] != piece_to_remove]
+        
+        # Kanten-Verbindungen kappen (beim Teil selbst und bei seinen Nachbarn)
+        for edge in piece_to_remove.edges_:
+            edge.connected = False
+        
+        # Kanten-Verbindungen bei den Nachbarn resetten, damit die Slots wieder verfügbar sind
+        if removed_coord is not None:
+            for coord, p in self.connected_directions:
+                for e in p.edges_:
+                    neighbor_pos = add_tuple(coord, e.direction.value)
+                    if equals_tuple(neighbor_pos, removed_coord):
+                        e.connected = False
+        
+        piece_to_remove.restore_initial_state()
+        return piece_to_remove
+
+    def _attempt_local_fix(self, max_attempts=1):
+        """Identifiziert die zwei schlechtesten Teile und versucht sie neu zu platzieren."""
+        for attempt in range(max_attempts):
+            suspicious_ids, errors = self._evaluate_final_edge_scores()
+            if not suspicious_ids:
+                break
+            
+            # Sortiere nach dem höchsten Corner-Error und nimm die Top 2
+            sorted_suspicious = sorted(suspicious_ids, key=lambda x: errors[x]['avg_corner_err'], reverse=True)
+            to_fix_ids = sorted_suspicious[:2]
+            
+            self.log(f"\n[LOCAL FIX] Attempt {attempt+1}: Targeting pieces {to_fix_ids} due to high errors.")
+            
+            # Backup des aktuellen Zustands für Revert
+            backup_pieces_state = [p.get_current_state() for p in self.pieces_]
+            backup_directions = list(self.connected_directions)
+            backup_extremum = self.extremum
+            backup_corner_pos = list(self.corner_pos)
+            backup_diff = {k: v.copy() for k, v in self.diff.items()}
+            old_strategy = self.strategy
+            
+            # Beide Teile entfernen
+            removed_pieces = []
+            for p_id in to_fix_ids:
+                removed_pieces.append(self._unplace_piece(p_id))
+            
+            # Diffs für die verbleibenden Teile und die neu verfügbaren Slots initialisieren
+            self.diff = {}
+            for _, p in self.connected_directions:
+                self.diff = self.compute_diffs(removed_pieces, self.diff, p)
+            
+            # Versuche Neu-Platzierung mit der Standard-Solve-Routine
+            self.strategy = Strategy.FILL
+            self.solve(self.connected_directions, removed_pieces)
+            
+            # Re-evaluierung
+            new_suspicious, new_errors = self._evaluate_final_edge_scores()
+            
+            # Prüfe, ob die Lösung jetzt besser ist (alle Teile platziert und weniger/kleinere Fehler)
+            if len(self.connected_directions) == len(self.pieces_) and len(new_suspicious) < len(suspicious_ids):
+                self.log(f"  [LOCAL FIX] Success: Swapped pieces, suspicious count reduced from {len(suspicious_ids)} to {len(new_suspicious)}.")
+                self.strategy = old_strategy
+            else:
+                self.log(f"  [LOCAL FIX] No improvement. Reverting to previous state.")
+                self.connected_directions = backup_directions
+                for i, p in enumerate(self.pieces_):
+                    p.set_state(backup_pieces_state[i])
+                self.extremum = backup_extremum
+                self.corner_pos = backup_corner_pos
+                self.diff = backup_diff
+                self.strategy = old_strategy
+                break
 
     def translate_puzzle(self):
         """Translate all pieces to the top left corner to be sure the puzzle is in the image"""
