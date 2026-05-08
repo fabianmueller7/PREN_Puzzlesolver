@@ -5,14 +5,18 @@ DEBUG_PIECE_CENTERS = 1  # Writes piece_centers.json to debug_output/ with each 
 
 EDGE_OFFSET = 0  # pixels (6 pixels ≈ 1mm) — shifts each edge outward to show the manufacturing tolerance band in debug output
 
-# Affine calibration: maps camera pixel (px, py) → robot mm (rx, ry).
+# Affine calibration: maps cropped-image pixel (px, py) → robot mm (rx, ry).
 # Robot zero is top-right; X increases to the left, Y increases downward.
-# Calibrated on Croped-Koordinatentest1.png (2145×1442) against 4 measured robot positions.
+# Crop region: CROP_X=503, CROP_Y=300 (906×648 px).
+# Calibrated against 3 measured robot positions:
+#   Unten links  px=(242,391) → robot=(222,307)
+#   Unten rechts px=(772,366) → robot=( 50,300)
+#   Oben Mitte   px=(452,163) → robot=(155,234)
 #   robot_x = CAL_M[0][0]*px + CAL_M[0][1]*py + CAL_M[0][2]
 #   robot_y = CAL_M[1][0]*px + CAL_M[1][1]*py + CAL_M[1][2]
 CAL_M = [
-    [-0.143786,  0.004110, 314.2690],
-    [ 0.000689,  0.141544, 188.9530],
+    [-0.324777, -0.005277, 302.659503],
+    [ 0.001981,  0.322000, 180.618496],
 ]
 
 
