@@ -20,10 +20,10 @@ CAPTURE_RAW_PATH = "debug_output/capture_raw.jpg"
 # Crop region within the captured frame (pixels).
 # Set to None to use the full frame.
 # Calibrate once by running: python main.py --show-crop
-CROP_X =  0    # left edge   — TODO: calibrate
-CROP_Y =  0    # top edge    — TODO: calibrate
-CROP_W =  None # width  (None = full width)
-CROP_H =  None # height (None = full height)
+CROP_X =  437  # left edge   (bottom-left x)
+CROP_Y =  285  # top edge    (top-right y)
+CROP_W =  965  # width       (1402 - 437)
+CROP_H =  665  # height      (950 - 285)
 
 
 # ---------------------------------------------------------------------------
