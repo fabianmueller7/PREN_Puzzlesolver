@@ -149,7 +149,8 @@ class Puzzle:
                     "grid_coord": list(p.coord) if hasattr(p, "coord") else None,
                     "start_center_px": [int(sc[1]), int(sc[0])],
                     "start_center_robot_mm": list(robot_start),
-                    "end_center":   [int(ec[0]), int(ec[1])],
+                    "end_center": [int(ec[0]), int(ec[1])],
+                    "rotation_deg": p.rotation_steps * 90,
                 })
             out_path = os.path.join(os.environ.get("ZOLVER_TEMP_DIR", "debug_output"), "piece_centers.json")
             with open(out_path, "w") as f:
@@ -399,6 +400,7 @@ class Puzzle:
     def update_direction(self, e, best_p, best_e):
         opp = get_opposite_direction(e.direction)
         step = step_direction(opp, best_e.direction)
+        best_p.rotation_steps = (best_p.rotation_steps + step) % 4
         for edge in best_p.edges_:
             edge.direction = rotate_direction(edge.direction, step)
 

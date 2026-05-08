@@ -19,6 +19,7 @@ class PuzzlePiece:
         self.nBorders_ = self.number_of_border()
         self.type = TypePiece(self.nBorders_)
         self.is_border = self.number_of_border() > 0
+        self.rotation_steps = 0  # cumulative 90° CW steps applied during solving
 
     def get_bbox(self):
         x = list(map(lambda p: p[0], self.pixels))
@@ -67,7 +68,7 @@ class PuzzlePiece:
 
     def rotate_edges(self, r):
         """Rotate the edges"""
-
+        self.rotation_steps = (self.rotation_steps + r) % 4
         for e in self.edges_:
             e.direction = rotate_direction(e.direction, r)
 

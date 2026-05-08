@@ -112,15 +112,7 @@ def _grid_coord_to_robot_mm(grid_coord: list) -> tuple:
 
 def move_pieces(robot, pieces: list):
     """
-    Move each puzzle piece from its detected start position to its target
-    position in the A5 frame.
-
-    Sequence per piece:
-      1. go_to start (x, y)
-      2. lower to pick height, magnet on, lift
-      3. go_to target (x, y)          — TODO: needs _grid_coord_to_robot_mm
-      4. lower to place height, magnet off, lift
-      5. rotate to target angle       — TODO: needs theta from positions_a5.json
+    For each piece: pick up, rotate to solved orientation, put back down.
     """
     print("[3/3] Starting piece movements")
 
@@ -131,27 +123,26 @@ def move_pieces(robot, pieces: list):
     robot.home_a()
 
     for piece in pieces:
-        idx = piece["piece_index"]
-        x_src, y_src = piece["start_center_robot_mm"]
+        idx   = piece["piece_index"]
+        x, y  = piece["start_center_robot_mm"]
+        angle = piece["rotation_deg"]
 
-        print(f"  piece {idx}: pick at ({x_src}, {y_src}) mm")
+        print(f"  piece {idx}: ({x}, {y}) mm  rotation {angle}°")
 
-        # --- pick up ---
-        robot.go_to(x_src, y_src)
+        robot.go_to(x, y)
         robot.go_to_z(Z_PICK)
         robot.magnet_on()
         robot.go_to_z(Z_UP)
 
-        # --- place ---
-        # TODO: uncomment once _grid_coord_to_robot_mm is implemented
-        # x_dst, y_dst = _grid_coord_to_robot_mm(piece["grid_coord"])
-        # robot.go_to(x_dst, y_dst)
-        # robot.go_to_z(Z_PLACE)
-        # robot.magnet_off()
-        # robot.go_to_z(Z_UP)
+        robot.go_to_a(angle)
+        robot.go_to_a(0)
+
+        robot.go_to_z(Z_PLACE)
+        robot.magnet_off()
+        robot.go_to_z(Z_UP)
 
     robot.motors_disable()
-    print("[3/3] All pieces moved")
+    print("[3/3] Done")
 
 
 # ---------------------------------------------------------------------------
