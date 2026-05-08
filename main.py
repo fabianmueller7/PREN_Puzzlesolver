@@ -8,7 +8,7 @@ import sys
 # Robot / pipeline configuration
 # ---------------------------------------------------------------------------
 ROBOT_PORT    = "/dev/ttyACM0"   # serial port of the Pico
-CAMERA_INDEX  = 0         # OpenCV camera index
+CAMERA_RESOLUTION = (1920, 1080)  # capture resolution
 
 Z_UP    =   0   # safe travel height [mm]  — TODO: calibrate
 Z_PICK  = -50   # height to pick up a piece [mm]  — TODO: calibrate
@@ -54,32 +54,19 @@ def _crop(frame):
     return frame[y:y2, x:x2]
 
 
-def _open_camera():
-    """Open the configured camera, falling back to scanning indices 0-4."""
-    import cv2
-    for idx in ([CAMERA_INDEX] + [i for i in range(5) if i != CAMERA_INDEX]):
-        cap = cv2.VideoCapture(idx)
-        if cap.isOpened():
-            ret, _ = cap.read()
-            if ret:
-                if idx != CAMERA_INDEX:
-                    print(f"[camera] CAMERA_INDEX={CAMERA_INDEX} failed, using index {idx} instead")
-                return cap, idx
-        cap.release()
-    raise RuntimeError(
-        f"No working camera found (tried indices 0-4). "
-        f"Run 'python main.py --list-cameras' to see available devices."
-    )
-
-
 def take_picture(save_path: str = CAPTURE_PATH) -> str:
-    """Capture one frame from the camera, save raw and cropped versions."""
+    """Capture one frame from the Pi camera, save raw and cropped versions."""
     import cv2
-    cap, idx = _open_camera()
-    ret, frame = cap.read()
-    cap.release()
-    if not ret:
-        raise RuntimeError(f"Camera {idx} opened but failed to read a frame")
+    from picamera2 import Picamera2
+
+    cam = Picamera2()
+    cam.configure(cam.create_still_configuration(main={"size": CAMERA_RESOLUTION}))
+    cam.start()
+    frame = cam.capture_array()   # numpy array, RGB
+    cam.stop()
+    cam.close()
+
+    frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
     cv2.imwrite(CAPTURE_RAW_PATH, frame)
     print(f"[1/3] Raw capture saved:    {CAPTURE_RAW_PATH}  ({frame.shape[1]}×{frame.shape[0]} px)")
     cropped = _crop(frame)
@@ -188,29 +175,12 @@ def run_pipeline(green_screen: bool = False):
 def main():
     parser = argparse.ArgumentParser(description="PREN Puzzlesolver")
     mode = parser.add_mutually_exclusive_group(required=True)
-    mode.add_argument("--gui",           action="store_true", help="open GUI viewer")
-    mode.add_argument("--prod",          action="store_true", help="production pipeline: capture → solve → move")
-    mode.add_argument("--list-cameras",  action="store_true", help="scan and print available camera indices")
+    mode.add_argument("--gui",  action="store_true", help="open GUI viewer")
+    mode.add_argument("--prod", action="store_true", help="production pipeline: capture → solve → move")
     parser.add_argument("--green-screen", action="store_true", help="enable green background removal")
     args = parser.parse_args()
 
-    if args.list_cameras:
-        import cv2
-        found = []
-        for i in range(8):
-            cap = cv2.VideoCapture(i)
-            if cap.isOpened():
-                ret, _ = cap.read()
-                if ret:
-                    found.append(i)
-            cap.release()
-        if found:
-            print("Available cameras:", found)
-            print(f"Set CAMERA_INDEX = {found[0]} in main.py to use the first one")
-        else:
-            print("No cameras found")
-
-    elif args.gui:
+    if args.gui:
         _setup_debug_dir()
         from PyQt5.QtWidgets import QApplication
         from solver.GUI.Viewer import Viewer
