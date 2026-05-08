@@ -6,16 +6,16 @@ A5_WIDTH_MM = 210.0
 A5_HEIGHT_MM = 148.0
 
 
-def compute_target_positions(input_json="positions_a4.json",
-                             output_json="positions_a5.json",
+def compute_target_positions(input_json="debug_output/positions_a4.json",
+                             output_json="debug_output/positions_a5.json",
                              rows=None,
                              cols=None):
     """
     Berechnet Zielkoordinaten der Puzzleteile im A5-Rahmen.
 
     Parameter:
-        input_json  : Datei mit Ist-Koordinaten (positions_a4.json)
-        output_json : Datei für Soll-Koordinaten (positions_a5.json)
+        input_json  : Datei mit Ist-Koordinaten (debug_output/positions_a4.json)
+        output_json : Datei für Soll-Koordinaten (debug_output/positions_a5.json)
         rows, cols  : Optional feste Anzahl Reihen/Spalten
                       (wird sonst automatisch geschätzt)
     """

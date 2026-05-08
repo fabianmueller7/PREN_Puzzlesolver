@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
 import os
-import config
+from .. import config
 import math
 
 from .Distance import real_edge_compute, generated_edge_compute

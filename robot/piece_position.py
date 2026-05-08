@@ -1,14 +1,11 @@
 import sys
 import os
 
-# zum Projekt-Root navigieren (eine Ebene höher als /Robot)
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-
 import cv2
 import json
 import numpy as np
 
-from Puzzle.Extractor import Extractor
+from solver.Puzzle.Extractor import Extractor
 
 
 def compute_piece_pose_from_pixels(pixels):
@@ -44,7 +41,7 @@ def compute_piece_pose_from_pixels(pixels):
 
 def detect_piece_positions(
     image_path: str,
-    output_json: str = "positions_a4.json",
+    output_json: str = "debug_output/positions_a4.json",
     a4_width_mm: float = 297.0,
     a4_height_mm: float = 210.0,
     green_screen: bool = False,
@@ -118,8 +115,8 @@ if __name__ == "__main__":
     parser.add_argument("image", help="Pfad zum A4-Bild mit Puzzleteilen")
     parser.add_argument(
         "--out",
-        default="positions_a4.json",
-        help="Pfad fuer JSON-Output (Default: positions_a4.json)",
+        default="debug_output/positions_a4.json",
+        help="Pfad fuer JSON-Output (Default: debug_output/positions_a4.json)",
     )
     parser.add_argument(
         "--green",

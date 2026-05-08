@@ -12,8 +12,8 @@ from PyQt5.QtWidgets import (
     QSizePolicy,
 )
 
-from GUI.ScrollMessageBox import ScrollMessageBox
-from GUI.SolveThread import SolveThread
+from .ScrollMessageBox import ScrollMessageBox
+from .SolveThread import SolveThread
 
 
 class Viewer(QMainWindow):

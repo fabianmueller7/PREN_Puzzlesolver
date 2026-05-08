@@ -6,13 +6,13 @@ from multiprocessing import Pool, cpu_count
 import numpy as np
 import cv2
 import scipy
-import config
+from .. import config
 
-from Puzzle.Edge import Edge
-from Puzzle.Enums import directions, TypeEdge
-from Puzzle.PuzzlePiece import PuzzlePiece
+from ..Puzzle.Edge import Edge
+from ..Puzzle.Enums import directions, TypeEdge
+from ..Puzzle.PuzzlePiece import PuzzlePiece
 from .peak_detect import detect_peaks
-from Puzzle.Distance import rgb2hsl
+from ..Puzzle.Distance import rgb2hsl
 
 
 def get_relative_angles(cnt, sigma=5):

@@ -1,5 +1,5 @@
 import numpy as np
-import config
+from .. import config
 
 from .utils import rotate, angle_between
 

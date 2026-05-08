@@ -7,14 +7,14 @@ A5_WIDTH_MM = 210.0
 A5_HEIGHT_MM = 148.0
 
 
-def visualize_positions(input_json="positions_a5.json",
+def visualize_positions(input_json="debug_output/positions_a5.json",
                         show_ids=True,
                         save_path=None):
     """
     Zeigt den A5-Rahmen und die Zielkoordinaten der Puzzleteile an.
 
     Parameter:
-        input_json : Datei mit Zielkoordinaten (positions_a5.json)
+        input_json : Datei mit Zielkoordinaten (debug_output/positions_a5.json)
         show_ids   : Wenn True, werden die IDs der Teile angezeigt
         save_path  : Optionaler Pfad zum Speichern als PNG
     """

@@ -2,10 +2,10 @@ import os
 
 import cv2
 import numpy as np
-import config
+from .. import config
 
-from Img.GreenScreen import remove_background
-from Img.filters import export_contours_without_colormatching
+from ..Img.GreenScreen import remove_background
+from ..Img.filters import export_contours_without_colormatching
 
 def show_image(img, name="image"):
     """Helper for quick visual debugging (only used if PREPROCESS_DEBUG_MODE == 1)."""
@@ -227,7 +227,7 @@ class Extractor:
         bw = cv2.GaussianBlur(bw, (5, 5), 0)
         _, bw = cv2.threshold(bw, 128, 255, cv2.THRESH_BINARY)
 
-        self._save_temp("simple_bw_raw.png", bw)
+        self._save_temp("debug_output/simple_bw_raw.png", bw)
 
         # --- 4. Contours ---
         contours, _ = cv2.findContours(bw, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -266,7 +266,7 @@ class Extractor:
         self.img_bw = np.zeros_like(bw)
         cv2.drawContours(self.img_bw, good_contours, -1, 255, thickness=cv2.FILLED)
 
-        self._save_temp("simple_bw_filled.png", self.img_bw)
+        self._save_temp("debug_output/simple_bw_filled.png", self.img_bw)
         return True
 
 

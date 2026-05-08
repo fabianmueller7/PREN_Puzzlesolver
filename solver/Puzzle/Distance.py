@@ -5,7 +5,7 @@ import scipy.ndimage
 import numpy as np
 from numba import njit
 
-import config
+from .. import config
 from .Enums import TypeEdge
 
 

@@ -1,6 +1,6 @@
 # GUI/SolveThread.py
 from PyQt5.QtCore import QThread, pyqtSignal
-from Puzzle.Puzzle import Puzzle  # adjust import path to your project
+from ..Puzzle.Puzzle import Puzzle
 
 
 class SolveThread(QThread):

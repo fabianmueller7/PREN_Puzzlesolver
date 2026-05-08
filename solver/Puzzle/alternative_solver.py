@@ -5,7 +5,7 @@ import os
 from typing import List, Optional, Tuple
 import numpy as np
 import cv2
-import config
+from .. import config
 from .Enums import TypeEdge
 from .Puzzle import Puzzle
 from .PuzzlePiece import PuzzlePiece as Piece
