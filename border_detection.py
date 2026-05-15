@@ -5,21 +5,8 @@ BORDER_OUTPUT_W = 906
 BORDER_OUTPUT_H = 648
 
 
-def order_corners(pts):
-    """Return 4 points sorted as [top-left, top-right, bottom-right, bottom-left]."""
-    import numpy as np
-    s = pts.sum(axis=1)
-    diff = np.diff(pts, axis=1).ravel()
-    return np.array([
-        pts[s.argmin()],
-        pts[diff.argmin()],
-        pts[s.argmax()],
-        pts[diff.argmax()],
-    ], dtype=np.float32)
-
-
 def detect_a4_border(frame):
-    """Detect the red A4 frame and return a perspective-warped fixed-size crop.
+    """Detect the red A4 frame, correct rotation with an affine rotate, and crop inside.
     Returns None when no clear red rectangle is found."""
     import cv2
     import numpy as np
@@ -46,10 +33,29 @@ def detect_a4_border(frame):
     if ring_area < 10_000:
         return None
 
-    # Prefer the inner hole of the ring so the red border is excluded from the output
+    # Prefer the inner hole so the red border is excluded from the output
     child_idx = hierarchy[0][ring_idx][2]
     inner_cnt = contours[child_idx] if child_idx != -1 else contours[ring_idx]
 
-    x, y, w, h = cv2.boundingRect(inner_cnt)
-    cropped = frame[y:y + h, x:x + w]
-    return cv2.resize(cropped, (BORDER_OUTPUT_W, BORDER_OUTPUT_H), interpolation=cv2.INTER_AREA)
+    center, (rw, rh), angle = cv2.minAreaRect(inner_cnt)
+    # minAreaRect angle is in [-90, 0); ensure the long side is horizontal
+    if rw < rh:
+        angle += 90
+
+    # Affine rotation — rigid transform, no shear/scale distortion
+    M = cv2.getRotationMatrix2D(center, angle, 1.0)
+    rotated = cv2.warpAffine(frame, M, (frame.shape[1], frame.shape[0]),
+                             flags=cv2.INTER_LINEAR)
+
+    # After rotation the inner rect is axis-aligned around the same center.
+    # Inset by BORDER_INSET px on each side to trim any residual red slither.
+    BORDER_INSET = 6
+    cw, ch = int(max(rw, rh)) - 2 * BORDER_INSET, int(min(rw, rh)) - 2 * BORDER_INSET
+    cx, cy = int(round(center[0])), int(round(center[1]))
+    x0 = max(cx - cw // 2, 0)
+    y0 = max(cy - ch // 2, 0)
+    x1 = min(x0 + cw, rotated.shape[1])
+    y1 = min(y0 + ch, rotated.shape[0])
+
+    return cv2.resize(rotated[y0:y1, x0:x1], (BORDER_OUTPUT_W, BORDER_OUTPUT_H),
+                      interpolation=cv2.INTER_AREA)
