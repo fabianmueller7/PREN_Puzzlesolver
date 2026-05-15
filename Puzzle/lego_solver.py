@@ -31,6 +31,18 @@ class LegoSolver(threading.Thread):
     def log(self, text):
         print(f"[LEGO_SOLVER] {text}")
 
+    def _prepare_piece_for_mover(self, piece):
+        """Ensures float shapes for NumPy casting and integer pixel keys for indexing."""
+        # 1. Ensure float shapes to avoid NumPy casting errors (int32 += float64)
+        for edge in piece.edges_:
+            if edge.shape.dtype.kind != 'f':
+                edge.shape = edge.shape.astype(np.float64)
+        # 2. Ensure integer pixel keys to avoid IndexError in get_image
+        new_pixels = {}
+        for (x, y), c in piece.pixels.items():
+            new_pixels[(int(round(x)), int(round(y)))] = c
+        piece.pixels = new_pixels
+
     def get_corner_pieces(self):
         """Findet alle Stücke mit 2 BORDER-Kanten."""
         return [i for i, p in enumerate(self.puzzle.pieces_) if p.number_of_border() >= 2]
@@ -61,6 +73,8 @@ class LegoSolver(threading.Thread):
             e_piece = piece.edge_in_direction(Directions.W)
             if not e_neighbor.is_compatible(e_piece): return float('inf')
             
+            self._prepare_piece_for_mover(neighbor)
+            self._prepare_piece_for_mover(piece)
             stick_pieces(e_neighbor, piece, e_piece)
             gap = np.linalg.norm(np.array(e_neighbor.shape[-1]) - np.array(e_piece.shape[0]))
             if self.puzzle.green_:
@@ -76,6 +90,8 @@ class LegoSolver(threading.Thread):
             e_piece = piece.edge_in_direction(Directions.N)
             if not e_neighbor.is_compatible(e_piece): return float('inf')
             
+            self._prepare_piece_for_mover(neighbor)
+            self._prepare_piece_for_mover(piece)
             stick_pieces(e_neighbor, piece, e_piece)
             gap = np.linalg.norm(np.array(e_neighbor.shape[-1]) - np.array(e_piece.shape[0]))
             if self.puzzle.green_:
@@ -100,11 +116,10 @@ class LegoSolver(threading.Thread):
                 if neighbor:
                     e_neighbor = neighbor.edge_in_direction(Directions.E)
                     e_piece = piece.edge_in_direction(Directions.W)
-                    # Ensure float shapes to avoid NumPy casting errors in Mover.py (float += translation)
-                    for edge in piece.edges_:
-                        if edge.shape.dtype != np.float64:
-                            edge.shape = edge.shape.astype(np.float64)
+                    self._prepare_piece_for_mover(neighbor)
+                    self._prepare_piece_for_mover(piece)
                     stick_pieces(e_neighbor, piece, e_piece, final_stick=True)
+                    self._prepare_piece_for_mover(piece) # Clean up after move
                     continue # Already stuck to West
             
             if y > 0:
@@ -112,11 +127,10 @@ class LegoSolver(threading.Thread):
                 if neighbor:
                     e_neighbor = neighbor.edge_in_direction(Directions.S)
                     e_piece = piece.edge_in_direction(Directions.N)
-                    # Ensure float shapes to avoid NumPy casting errors in Mover.py (float += translation)
-                    for edge in piece.edges_:
-                        if edge.shape.dtype != np.float64:
-                            edge.shape = edge.shape.astype(np.float64)
+                    self._prepare_piece_for_mover(neighbor)
+                    self._prepare_piece_for_mover(piece)
                     stick_pieces(e_neighbor, piece, e_piece, final_stick=True)
+                    self._prepare_piece_for_mover(piece) # Clean up after move
 
     def solve_recursive(self, idx, w, h):
         """Backtracking Kern: Versucht das nächste Grid-Feld zu füllen."""
@@ -139,11 +153,7 @@ class LegoSolver(threading.Thread):
             
             for rot in range(4):
                 piece.set_state(local_state)
-                # Ensure float shapes to avoid NumPy casting errors in Mover.py
-                for edge in piece.edges_:
-                    if edge.shape.dtype != np.float64:
-                        edge.shape = edge.shape.astype(np.float64)
-                        
+                self._prepare_piece_for_mover(piece)
                 piece.rotate_edges(rot)
                 if self.check_border_constraint(piece, x, y, w, h):
                     score = self.get_match_score(piece, x, y)
@@ -204,8 +214,7 @@ class LegoSolver(threading.Thread):
                 # Reset state for each dimension attempt
                 for piece in self.puzzle.pieces_:
                     piece.restore_initial_state()
-                    for edge in piece.edges_:
-                        edge.shape = edge.shape.astype(np.float64)
+                    self._prepare_piece_for_mover(piece)
                 self.grid = {}
                 self.used_indices = set()
                 
