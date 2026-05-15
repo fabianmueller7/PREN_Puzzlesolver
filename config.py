@@ -3,3 +3,10 @@ DEBUG_SHOW_DIAGRAMS = 0  # Shows matplotlib diagrams interactively (requires DEB
 DEBUG_ALT_SOLVER = 1     # Saves debug images for the alternative solver to debug_output/
 
 EDGE_OFFSET = 12  # pixels (6 pixels ≈ 1mm) — shifts each edge outward to show the manufacturing tolerance band in debug output
+
+# Schwellenwert für Kanten-Matches. 
+# Werte unter 1000 stellen sicher, dass nur HEAD-HOLE Paarungen akzeptiert werden.
+# Ein niedrigerer Wert (z.B. 600) erhöht die Strenge bei der geometrischen Passform.
+MATCH_THRESHOLD = 5.0 # Erhöht für bessere Fehlertoleranz bei Distr_V6
+FLAT_BORDER_THRESHOLD = 0.12 # Erhöht, damit Randstücke sicherer erkannt werden
+MAX_CORNER_GAP = 25.0 # Maximale Lücke an den Ecken in Pixeln

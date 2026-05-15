@@ -3,9 +3,8 @@ import numpy as np
 import os
 import sys
 import config
-#uncomment as soon as alternative solver is ready
-#import math
-
+import math
+import threading
 from .Distance import real_edge_compute, generated_edge_compute
 from .Extractor import Extractor, show_image
 from .Mover import stick_pieces
@@ -31,10 +30,6 @@ from .tuple_helper import (
     display_dim,
 )
 
-#uncomment as soon as alternative solver is ready
-#import threading
-#from .alternative_solver import AlternativeSolver
-
 
 class Puzzle:
     """
@@ -56,6 +51,11 @@ class Puzzle:
             self.extract = Extractor(path, viewer, green_screen, factor)
             self.pieces_ = self.extract.extract()
 
+        # Apply EDGE_OFFSET to piece geometry for mechanical gap compensation
+        for piece in self.pieces_:
+            piece.apply_edge_offset(config.EDGE_OFFSET)
+            piece.backup_initial_state() # Store initial state after offset
+
         self.border_pieces = [p for p in self.pieces_ if p.is_border]
         self.non_border_pieces = [p for p in self.pieces_ if not p.is_border]
         self.viewer = viewer
@@ -72,77 +72,102 @@ class Puzzle:
     def solve_puzzle(self):
         self.log(">>> START solving puzzle")
 
-        # Start the alternative solver concurrently. It will analyze the
-        # already-extracted pieces and store results in `self.alt_results`.
-        #try:
-        ##    alt = AlternativeSolver(self)
-        ##    t = threading.Thread(target=alt.run, daemon=True)
-        #    t.start()
-        #except Exception:
-            # Non critical: if the alternative solver fails to start, continue
-        #    self.log("Alt solver failed to start; continuing with main solver")
+        # Identify all possible starting corners (pieces with at least 2 border edges)
+        corners = [p for p in self.border_pieces if p.number_of_border() > 1]
+        if not corners:
+            self.log("No corner pieces found! Trying first border piece as a fallback.")
+            corners = self.border_pieces[:1]
+        if not corners:
+            corners = self.pieces_[:1]
 
-        # Separate border pieces from the other
-        connected_pieces = []
-        border_pieces = self.border_pieces.copy()
-        non_border_pieces = self.non_border_pieces.copy()
+        best_attempt_count = 0
 
-        # Start by a corner piece
-        for piece in border_pieces:
-            if piece.number_of_border() > 1:
-                connected_pieces.append(piece)
-                border_pieces.remove(piece)
-                break
+        # Robust solving: Try every corner candidate as the starting piece
+        for start_piece in corners:
+            # Try all 4 possible rotations for the starting piece
+            for rotation in range(4):
+                # Reset all pieces to their 'clean' state before each solve attempt
+                for piece in self.pieces_:
+                    piece.restore_initial_state()
+                
+                # Reset solver internal state
+                self.connected_directions = []
+                self.diff = {}
+                self.corner_pos = []
+                self.extremum = (0, 0, 1, 1)
 
-        self.log("Number of border pieces: ", len(border_pieces) + 1)
+                # Rotate logical edge directions
+                start_piece.rotate_edges(rotation)
+                
+                # Expansion logic check: Our grid grows towards positive X and Y.
+                # Therefore, the start piece at (0,0) must have borders at its South and West edges.
+                if not (start_piece.edge_in_direction(Directions.S).connected and 
+                        start_piece.edge_in_direction(Directions.W).connected):
+                    continue
+                
+                self.log(f"Attempting solve starting with piece {self.pieces_.index(start_piece)} "
+                         f"at rotation {rotation}")
 
+                connected_pieces = [start_piece]
+                border_pieces = [p for p in self.border_pieces if p != start_piece]
+                non_border_pieces = self.non_border_pieces.copy()
+                
+                start_piece.coord = (0, 0)
+                self.corner_pos = [((0, 0), start_piece)]
+
+                # Solve the border frame first
+                self.strategy = Strategy.BORDER
+                connected_pieces = self.solve(connected_pieces, border_pieces)
+                
+                # Fill in the center pieces
+                self.strategy = Strategy.FILL
+                connected_pieces = self.solve(connected_pieces, non_border_pieces)
+
+                # If we successfully placed all pieces, we are done
+                if len(connected_pieces) == len(self.pieces_):
+                    self.log(f">>> SUCCESS: All {len(connected_pieces)} pieces placed!")
+                    self._finish_and_export()
+                    return
+                
+                if len(connected_pieces) > best_attempt_count:
+                    best_attempt_count = len(connected_pieces)
+                
+                self.log(f"Attempt failed. Placed {len(connected_pieces)}/{len(self.pieces_)} pieces.")
+
+        self.log(f">>> FAILED to solve puzzle completely. Best attempt: {best_attempt_count} pieces.")
+        self._finish_and_export()
+
+    def _finish_and_export(self):
+        """Final steps to translate, save, and trigger secondary solvers."""
+        self.log(">>> FINALIZING result...")
+        # Versuche Fehler durch Neu-Platzierung zu beheben
+        self._attempt_local_fix(max_attempts=2)
+        self.translate_puzzle()
         self.export_pieces(
-            os.path.join(os.environ["ZOLVER_TEMP_DIR"], "stick{0:03d}".format(1) + ".png"),
-            os.path.join(os.environ["ZOLVER_TEMP_DIR"], "colored{0:03d}".format(1) + ".png"),
-            "Border types".format(),
-            "Step {0:03d}".format(1),
-            display_border=True,
+            os.path.join(os.environ["ZOLVER_TEMP_DIR"], "stick.png"), 
+            os.path.join(os.environ["ZOLVER_TEMP_DIR"], "colored.png"), 
+            display=False
         )
 
-        self.log(">>> START solve border")
-        start_piece = connected_pieces[0]
-        start_piece.coord = (0, 0)
-        self.corner_pos = [((0, 0), start_piece)]  # we start with a corner
+        # Start the alternative solver concurrently (after main solver completes)
+        try:
+            from .alternative_solver import AlternativeSolver
+            import queue
+            alt_queue = queue.Queue()
+            alt = AlternativeSolver(self, alt_queue)
+            alt.start()
+        except Exception:
+            self.log("Alt solver failed to start")
 
-        #uncomment as soon as alternative solver is ready
-        #rotation_count = 0
-        for i in range(4):
-            if (
-                start_piece.edge_in_direction(Directions.S).connected
-                and start_piece.edge_in_direction(Directions.W).connected
-            ):
-                break
-            # rotate logical edge directions (clockwise by 90°)
-            start_piece.rotate_edges(1)
-            #uncomment as soon as alternative solver is ready
-            # rotate actual geometry (edge shapes + piece pixels) to match the
-            # updated directions so the first piece is really placed in the
-            # chosen corner orientation (rotate 90° clockwise)
-            #angle = - (math.pi / 2)  # radians, negative = clockwise
-            #center = start_piece.get_center()
-            #for edge in start_piece.edges_:
-            #    for idx, pt in enumerate(edge.shape):
-            #        edge.shape[idx] = rotate(pt, angle, center)
-            # rotate piece pixels as well
-            #start_piece.rotate(angle, center)
-            #rotation_count += 1
-
-        self.extremum = (0, 0, 1, 1)
-
-        self.strategy = Strategy.BORDER
-        connected_pieces = self.solve(connected_pieces, border_pieces)
-        self.log(">>> START solve middle")
-        self.strategy = Strategy.FILL
-        self.solve(connected_pieces, non_border_pieces)
-
-        self.log(">>> SAVING result...")
-        self.translate_puzzle()
-        self.export_pieces(os.path.join(os.environ["ZOLVER_TEMP_DIR"], "stick.png"), os.path.join(os.environ["ZOLVER_TEMP_DIR"], "colored.png"), display=False)
+        # Start the LEGO solver concurrently (after main solver completes)
+        try:
+            from .lego_solver import LegoSolver
+            import queue
+            lego_queue = queue.Queue()
+            lego = LegoSolver(self, lego_queue)
+            lego.start()
+        except Exception:
+            self.log("LEGO solver failed to start")
 
         # Two sets of pieces: Already connected ones and pieces remaining to connect to the others
         # The first piece has an orientation like that:
@@ -215,19 +240,20 @@ class Puzzle:
             self.diff = self.add_to_diffs(left_pieces)
 
         while len(left_pieces) > 0:
-            self.log(
-                "<--- New match ---> pieces left: ",
-                len(left_pieces),
-                "extremum:",
-                self.extremum,
-                "puzzle dimension:",
-                display_dim(self.possible_dim),
-            )
-            block_best_e, best_e = self.best_diff(
+            block_best_e, best_e, best_score = self.best_diff(
                 self.diff, self.connected_directions, left_pieces)
 
-            if block_best_e is None or best_e is None:
-                self.log("No match found — solver cannot continue")
+            self.log(
+                f"<--- New match ---> pieces left: {len(left_pieces)}, Score: {best_score:.2f}, "
+                f"extremum: {self.extremum}, puzzle dimension: {display_dim(self.possible_dim)}"
+            )
+
+            # Check if match is too poor or not found. 
+            # Scores >= 1000 usually indicate type mismatches (e.g. HOLE matching HOLE).
+            threshold = getattr(config, 'MATCH_THRESHOLD', 1000.0)
+            if block_best_e is None or best_e is None or best_score >= threshold:
+                reason = "No match found" if block_best_e is None else f"Best match score {best_score:.2f} exceeds threshold {threshold}"
+                self.log(f"{reason} — solver cannot continue on this path")
                 break
 
             # Winkel vom Edge aufs Piece übertragen
@@ -358,9 +384,9 @@ class Puzzle:
         )
         old_strat = self.strategy
         self.strategy = Strategy.NAIVE
-        best_bloc_e, best_e = self.best_diff(diff, connected_direction, left_piece)
+        best_bloc_e, best_e, best_score = self.best_diff(diff, connected_direction, left_piece)
         self.strategy = old_strat
-        return best_bloc_e, best_e
+        return best_bloc_e, best_e, best_score
 
     def best_diff(self, diff, connected_direction, left_piece):
         """
@@ -383,6 +409,9 @@ class Puzzle:
                 best_coord = []
                 for x in range(minX, maxX + 1):
                     for y in range(minY, maxY + 1):
+                        # Skip if coordinate is already occupied to prevent overlaps
+                        if any(equals_tuple((x, y), c) for c, _ in connected_direction):
+                            continue
                         neighbor = list(
                             filter(
                                 lambda e: is_neighbor(
@@ -422,6 +451,11 @@ class Puzzle:
                                     if diff_score == float("inf"):
                                         break
                                     last_test = edge_exposed, edge
+                        
+                        # Heuristic: Penalty for matching corners to non-corner positions
+                        if p.type == TypePiece.ANGLE and i < 2:
+                            diff_score += 500 
+
                             if diff_score < min_diff:
                                 best_bloc_e, best_e, min_diff = (
                                     last_test[0],
@@ -433,15 +467,18 @@ class Puzzle:
                 elif len(best_coord):
                     self.log("Fall back to a worst", self.strategy)
             if best_e is None:
-                best_bloc_e, best_e = self.fallback(
+                return self.fallback(
                     diff, connected_direction, left_piece
                 )
-            return best_bloc_e, best_e
+            return best_bloc_e, best_e, min_diff
 
         elif self.strategy == Strategy.BORDER:
             best_coord = []
             for x in range(minX, maxX + 1):
                 for y in range(minY, maxY + 1):
+                    # Skip if coordinate is already occupied to prevent overlaps
+                    if any(equals_tuple((x, y), c) for c, _ in connected_direction):
+                        continue
                     neighbor = list(
                         filter(
                             lambda e: is_neighbor((x, y), e[0], connected_direction),
@@ -498,18 +535,18 @@ class Puzzle:
                                 diff_score,
                             )
             if best_e is None:
-                best_bloc_e, best_e = self.fallback(
+                return self.fallback(
                     diff, connected_direction, left_piece, strat=Strategy.FILL
                 )
-            return best_bloc_e, best_e
+            return best_bloc_e, best_e, min_diff
 
         elif self.strategy == Strategy.NAIVE:
             for block_e, block_e_diff in diff.items():
                 for e, diff_score in block_e_diff.items():
                     if diff_score < min_diff:
                         best_bloc_e, best_e, min_diff = block_e, e, diff_score
-            return best_bloc_e, best_e
-        return None, None
+            return best_bloc_e, best_e, min_diff
+        return None, None, float("inf")
 
     def add_to_diffs(self, left_pieces):
         """Build the list of edge to test."""
@@ -527,10 +564,22 @@ class Puzzle:
                 for e2 in piece.edges_:
                     e2.backup_shape()
                 stick_pieces(e, piece, edge)
+                
+                # Berechne den Corner-Gap (Abstand der Eckpunkte nach dem Ausrichten)
+                # Ein hoher Gap deutet auf eine falsche Platzierung hin, selbst wenn die Nase passt.
+                gap_dist = np.linalg.norm(np.array(e.shape[-1]) - np.array(edge.shape[0]))
+
                 if self.green_:
-                    diff_e[edge] = real_edge_compute(edge, e)
+                    score = real_edge_compute(edge, e)
                 else:
-                    diff_e[edge] = generated_edge_compute(edge, e)
+                    score = generated_edge_compute(edge, e)
+                
+                # Bestrafung für große Lücken an den Ecken
+                # Wenn die Lücke > 15px ist, wird der Score massiv verschlechtert
+                if gap_dist > 15.0:
+                    score += gap_dist * 5.0
+                
+                diff_e[edge] = score
                 for e2 in piece.edges_:
                     e2.restore_backup_shape()
 
@@ -596,26 +645,215 @@ class Puzzle:
         best_p.coord = (new_coord[1], new_coord[0])
         self.log("Placed:", best_p.type, "at", best_p.coord)
 
+    def _evaluate_final_edge_scores(self):
+        """
+        Re-evaluates and logs the match scores for all connected edges
+        after the puzzle has been solved. This helps in diagnosing
+        sub-optimal placements.
+        """
+        self.log("\n>>> Evaluating Final Edge Match Scores...")
+        evaluated_pairs = set()  # To avoid evaluating the same pair twice (e.g., A->B and B->A)
+        piece_quality = {} # piece_id -> list of scores
+        piece_corner_err = {} # piece_id -> list of corner distances
+        
+        # Dictionary to return for fix logic
+        piece_errors = {} 
+
+        # Create a mapping from coordinates to pieces for efficient lookup
+        coord_to_piece_map = {coord: piece for coord, piece in self.connected_directions}
+
+        for (coord_p1, p1) in self.connected_directions:
+            # Get a unique identifier for p1, e.g., its index in the original pieces list
+            p1_id = self.pieces_.index(p1) if p1 in self.pieces_ else f"UnknownPiece@{id(p1)}"
+            if p1_id not in piece_quality:
+                piece_quality[p1_id] = []
+                piece_corner_err[p1_id] = []
+
+            for e1 in p1.edges_:
+                if e1.connected:
+                    # Determine the expected coordinate of the neighbor
+                    neighbor_coord = add_tuple(coord_p1, e1.direction.value)
+                    
+                    # Find the neighbor piece using the map
+                    p2 = coord_to_piece_map.get(neighbor_coord)
+                    
+                    if p2 is None:
+                        self.log(f"  Warning: Connected edge of Piece {p1_id} ({coord_p1}) {e1.direction.name} has no found neighbor at {neighbor_coord}")
+                        continue
+
+                    # Get a unique identifier for p2
+                    p2_id = self.pieces_.index(p2) if p2 in self.pieces_ else f"UnknownPiece@{id(p2)}"
+                    if p2_id not in piece_quality:
+                        piece_quality[p2_id] = []
+                        piece_corner_err[p2_id] = []
+
+                    # Find the corresponding edge on the neighbor piece
+                    e2 = p2.edge_in_direction(get_opposite_direction(e1.direction))
+                    
+                    # Ensure we don't evaluate the same pair twice (e.g., P1-N <-> P2-S and P2-S <-> P1-N)
+                    pair_key = tuple(sorted(((p1_id, e1.direction.name), (p2_id, e2.direction.name))))
+                    if pair_key in evaluated_pairs:
+                        continue
+                    evaluated_pairs.add(pair_key)
+
+                    score = real_edge_compute(e1, e2) if self.green_ else generated_edge_compute(e1, e2)
+
+                    # Berechne die Distanz zwischen den korrespondierenden Eckpunkten
+                    # Da Kanten "face-to-face" liegen, trifft e1[Anfang] auf e2[Ende] und vice versa
+                    dist_a = np.linalg.norm(np.array(e1.shape[0]) - np.array(e2.shape[-1]))
+                    dist_b = np.linalg.norm(np.array(e1.shape[-1]) - np.array(e2.shape[0]))
+                    avg_corner_dist = (dist_a + dist_b) / 2.0
+
+                    piece_quality[p1_id].append(score)
+                    piece_quality[p2_id].append(score)
+                    piece_corner_err[p1_id].append(avg_corner_dist)
+                    piece_corner_err[p2_id].append(avg_corner_dist)
+
+                    self.log(f"  Piece {p1_id} ({coord_p1}) {e1.direction.name} <-> Piece {p2_id} ({neighbor_coord}) {e2.direction.name}: Score = {score:.2f}, Corner-Gap = {avg_corner_dist:.2f}px")
+
+        # Output a summary per piece to identify the 'bad' ones
+        self.log("\n>>> Quality Summary by Piece:")
+        threshold = getattr(config, 'MATCH_THRESHOLD', 600.0)
+        max_allowed_gap = getattr(config, 'MAX_CORNER_GAP', 30.0)
+        suspicious = []
+        for p_id, scores in piece_quality.items():
+            if not scores: continue
+            avg_score = sum(scores) / len(scores)
+            max_score = max(scores)
+            avg_corner = sum(piece_corner_err[p_id]) / len(piece_corner_err[p_id]) if piece_corner_err[p_id] else 0.0
+            
+            # Ein Teil ist verdächtig, wenn der Score zu hoch ODER die Ecken zu weit auseinander sind
+            is_bad = max_score >= threshold or avg_corner > max_allowed_gap
+            status = "OK" if not is_bad else "BAD MATCH ❌"
+            
+            if status != "OK": suspicious.append(p_id)
+            
+            piece_errors[p_id] = {'max_score': max_score, 'avg_corner_err': avg_corner}
+            self.log(f"  Piece {p_id:2}: Score-Max={max_score:6.2f}, Corner-Err-Avg={avg_corner:5.2f}px -> {status}")
+        
+        if suspicious:
+            self.log(f"\nPotential errors detected in pieces: {suspicious}")
+
+        self.log(">>> End Final Edge Match Scores\n")
+        return suspicious, piece_errors
+
+    def _unplace_piece(self, p_id):
+        """Entnimmt ein Teil aus der Platzierungsliste und setzt seine Verbindungen zurück."""
+        piece_to_remove = self.pieces_[p_id]
+        
+        removed_coord = None
+        for coord, p in self.connected_directions:
+            if p == piece_to_remove:
+                removed_coord = coord
+                break
+
+        self.log(f"  Unplacing Piece {p_id} at {removed_coord}...")
+        
+        # Aus connected_directions entfernen
+        self.connected_directions = [item for item in self.connected_directions if item[1] != piece_to_remove]
+        
+        # Kanten-Verbindungen kappen (beim Teil selbst und bei seinen Nachbarn)
+        for edge in piece_to_remove.edges_:
+            edge.connected = False
+        
+        # Kanten-Verbindungen bei den Nachbarn resetten, damit die Slots wieder verfügbar sind
+        if removed_coord is not None:
+            for coord, p in self.connected_directions:
+                for e in p.edges_:
+                    neighbor_pos = add_tuple(coord, e.direction.value)
+                    if equals_tuple(neighbor_pos, removed_coord):
+                        e.connected = False
+        
+        piece_to_remove.restore_initial_state()
+        return piece_to_remove
+
+    def _attempt_local_fix(self, max_attempts=1):
+        """Identifiziert die zwei schlechtesten Teile und versucht sie neu zu platzieren."""
+        for attempt in range(max_attempts):
+            suspicious_ids, errors = self._evaluate_final_edge_scores()
+            if not suspicious_ids:
+                break
+            
+            # Sortiere nach dem höchsten Corner-Error
+            sorted_suspicious = sorted(suspicious_ids, key=lambda x: errors[x]['avg_corner_err'], reverse=True)
+            
+            # Wenn Piece 0 (Startstück) betroffen ist, brechen wir den ganzen Solve-Versuch ab,
+            # da das Fundament falsch ist. solve_puzzle wird dann die nächste Rotation/Ecke probieren.
+            if 0 in sorted_suspicious and errors[0]['avg_corner_err'] > 20.0:
+                self.log("[LOCAL FIX] Start piece (0) is suspicious. Aborting this solve attempt to try next start config.")
+                return
+
+            # Ansonsten versuchen wir die bis zu 3 schlechtesten Teile (außer Startstück) zu fixen
+            to_fix_ids = [pid for pid in sorted_suspicious if pid != 0][:3]
+            
+            self.log(f"\n[LOCAL FIX] Attempt {attempt+1}: Targeting pieces {to_fix_ids} for re-placement.")
+            
+            # Backup des aktuellen Zustands für Revert
+            backup_pieces_state = [p.get_current_state() for p in self.pieces_]
+            backup_directions = list(self.connected_directions)
+            backup_extremum = self.extremum
+            backup_corner_pos = list(self.corner_pos)
+            backup_diff = {k: v.copy() for k, v in self.diff.items()}
+            old_strategy = self.strategy
+            
+            # Beide Teile entfernen
+            removed_pieces = []
+            for p_id in to_fix_ids:
+                removed_pieces.append(self._unplace_piece(p_id))
+            
+            # Diffs für die verbleibenden Teile und die neu verfügbaren Slots initialisieren
+            self.diff = {}
+            for _, p in self.connected_directions:
+                self.diff = self.compute_diffs(removed_pieces, self.diff, p)
+            
+            # Versuche Neu-Platzierung mit der Standard-Solve-Routine
+            self.strategy = Strategy.FILL
+            self.solve(self.connected_directions, removed_pieces)
+            
+            # Re-evaluierung
+            new_suspicious, new_errors = self._evaluate_final_edge_scores()
+            
+            # Prüfe, ob die Lösung jetzt besser ist (alle Teile platziert und weniger/kleinere Fehler)
+            if len(self.connected_directions) == len(self.pieces_) and len(new_suspicious) < len(suspicious_ids):
+                self.log(f"  [LOCAL FIX] Success: Swapped pieces, suspicious count reduced from {len(suspicious_ids)} to {len(new_suspicious)}.")
+                self.strategy = old_strategy
+            else:
+                self.log(f"  [LOCAL FIX] No improvement. Reverting to previous state.")
+                self.connected_directions = backup_directions
+                for i, p in enumerate(self.pieces_):
+                    p.set_state(backup_pieces_state[i])
+                self.extremum = backup_extremum
+                self.corner_pos = backup_corner_pos
+                self.diff = backup_diff
+                self.strategy = old_strategy
+                break
+
     def translate_puzzle(self):
         """Translate all pieces to the top left corner to be sure the puzzle is in the image"""
 
-        minX = sys.maxsize
-        minY = sys.maxsize
+        # Find minimum y (min_y) and minimum x (min_x) across all edges.
+        # pixel[0] is y, pixel[1] is x.
+        min_y = sys.maxsize
+        min_x = sys.maxsize
         for p in self.pieces_:
             for e in p.edges_:
                 for pixel in e.shape:
-                    if pixel[0] < minX:
-                        minX = pixel[0]
-                    if pixel[1] < minY:
-                        minY = pixel[1]
+                    if pixel[0] < min_y:
+                        min_y = pixel[0]
+                    if pixel[1] < min_x:
+                        min_x = pixel[1]
+
+        # Use integer translation to avoid float keys in PuzzlePiece.pixels
+        ty = int(math.floor(min_y))
+        tx = int(math.floor(min_x))
 
         for p in self.pieces_:
             for e in p.edges_:
                 for ip, _ in enumerate(e.shape):
-                    e.shape[ip] += (-minX, -minY)
+                    e.shape[ip] += (-ty, -tx)
 
         for p in self.pieces_:
-            p.translate(minX, minY)
+            p.translate(-tx, -ty)
 
     def export_pieces(
         self,
@@ -633,12 +871,10 @@ class Puzzle:
         :param path_colored: Path used to export the colored image
         :return: the best edge found in the bloc
         """
-        if not (self.viewer and display):
-            return
 
         minX, minY, maxX, maxY = self.get_bbox()
-        colored_img = np.zeros((maxX - minX, maxY - minY, 3))
-        border_img = np.zeros((maxX - minX, maxY - minY, 3))
+        colored_img = np.zeros((maxX - minX, maxY - minY, 3), dtype=np.uint8)
+        border_img = np.zeros((maxX - minX, maxY - minY, 3), dtype=np.uint8)
 
         for piece in self.pieces_:
             # Reframe piece pixels to (0, 0)
@@ -653,7 +889,7 @@ class Puzzle:
                 list(map(lambda e: int(e[1]), tmp)),
                 list(map(lambda e: e[2], tmp)),
             )
-            colored_img[x, y] = c
+            colored_img[x, y] = np.array(c, dtype=np.uint8)
 
             # ---- Rotation des Puzzleteils anwenden (visuell) ----
             if hasattr(piece, "rotation_angle") and piece.rotation_angle != 0:
@@ -675,11 +911,11 @@ class Puzzle:
             if config.DEBUG_FILE_OUTPUT == 1:
                 # Contours
                 for e in piece.edges_:
-                    for y, x in e.shape:
-                        y, x = y - minY, x - minX
+                    for y_float, x_float in e.shape:
+                        y, x = int(y_float - minY), int(x_float - minX)
                         if (
-                                0 <= y < border_img.shape[1]
-                                and 0 <= x < border_img.shape[0]
+                                0 <= y < border_img.shape[1] # Check bounds with integer y
+                                and 0 <= x < border_img.shape[0] # Check bounds with integer x
                         ):
                             rgb = (0, 0, 0)
                             if e.type == TypeEdge.HOLE:
@@ -773,14 +1009,6 @@ class Puzzle:
 
             cv2.imwrite(path_colored, colored_img)
 
-    def show_image(img, name="image"):
-        """Helper for quick visual debugging (only used if PREPROCESS_DEBUG_MODE == 1)."""
-        import matplotlib.pyplot as plt
-
-        plt.axis("off")
-        plt.title(name)
-        plt.imshow(img, cmap="gray" if len(img.shape) == 2 else None)
-        plt.show()
 
     def compute_possible_size(self, nb_piece, nb_border) -> list[tuple]:
         """

@@ -327,6 +327,12 @@ def _reclassify_undefined(t, pos_in, neg_in, segment_angles=None, flat_threshold
     :param flat_threshold: Amplitude below which a single-polarity segment is BORDER.
                            Pass (FLAT_BORDER_FRACTION * max_seg_amp) for a relative cutoff.
     """
+    # Threshold: max abs amplitude below which a single-polarity segment is BORDER.
+    # The signal is L2-normalized over the whole contour, so a flat/rounded border
+    # contributes very little energy while a real connector has significant amplitude.
+    # Default fallback, will be overwritten by config if present
+    FLAT_BORDER_THRESHOLD = getattr(config, 'FLAT_BORDER_THRESHOLD', 0.05)
+
     if t != TypeEdge.UNDEFINED:
         return t
     # Round feature: >=1 peak of one polarity nested inside the other
@@ -338,15 +344,13 @@ def _reclassify_undefined(t, pos_in, neg_in, segment_angles=None, flat_threshold
     if len(pos_in) > 0 and len(neg_in) == 0:
         if segment_angles is not None:
             amp = np.max(np.abs(segment_angles))
-            print(f"[reclassify] single-pos peak, max_amp={amp:.4f}, threshold={flat_threshold:.4f}")
-            if amp < flat_threshold:
+            if amp < FLAT_BORDER_THRESHOLD:
                 return TypeEdge.BORDER
         return TypeEdge.HEAD
     if len(neg_in) > 0 and len(pos_in) == 0:
         if segment_angles is not None:
             amp = np.max(np.abs(segment_angles))
-            print(f"[reclassify] single-neg peak, max_amp={amp:.4f}, threshold={flat_threshold:.4f}")
-            if amp < flat_threshold:
+            if amp < FLAT_BORDER_THRESHOLD:
                 return TypeEdge.BORDER
         return TypeEdge.HOLE
     return TypeEdge.UNDEFINED
@@ -374,6 +378,8 @@ def my_find_corner_signature(cnt, green=False):
     max_sigma = 12
     if not green:
         sigma = 5
+        # Increased from 15 to 20 to handle noisy contours with extra peaks
+        # Some puzzle pieces have jagged edges that need aggressive smoothing
         max_sigma = 20
     while sigma <= max_sigma:
         print("Smooth curve with sigma={}...".format(sigma))

@@ -2,13 +2,24 @@ import threading
 import queue
 import math
 import os
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Dict, Set
 import numpy as np
 import cv2
 import config
-from .Enums import TypeEdge
+from .Enums import TypeEdge, Directions, get_opposite_direction, directions
 from .Puzzle import Puzzle
 from .PuzzlePiece import PuzzlePiece as Piece
+from .Mover import stick_pieces
+from .Distance import generated_edge_compute
+from .tuple_helper import is_neighbor, sub_tuple, add_tuple
+
+
+def tuple_to_direction(tup: Tuple[int, int]) -> Optional[Directions]:
+    """Convert a tuple like (1, 0) to Directions.E"""
+    for d in directions:
+        if d.value == tup:
+            return d
+    return None
 
 
 def edge_length(shape: np.ndarray) -> float:
@@ -49,6 +60,24 @@ def max_deviation_from_line(shape: np.ndarray) -> Tuple[float, int]:
     return max_dev, max_idx
 
 
+def edge_curvature(shape: np.ndarray) -> float:
+    """Compute normalized curvature (roughness) of an edge.
+    0 = perfectly straight, higher values = more curved/complex."""
+    if shape is None or len(shape) < 2:
+        return 0.0
+    max_dev, _ = max_deviation_from_line(shape)
+    edge_len = edge_length(shape)
+    if edge_len < 1:
+        return 0.0
+    return max_dev / (edge_len + 1.0)
+
+
+def edge_straightness(shape: np.ndarray, threshold: float = 2.0) -> float:
+    """Return 1.0 if edge is straight (within threshold), 0.0 if curved."""
+    curvature = edge_curvature(shape)
+    return 1.0 if curvature <= threshold else 0.0
+
+
 def straight_length(shape: np.ndarray, threshold: float = 1.0) -> float:
     """Compute the length of the straight part of the edge until deviation exceeds threshold."""
     if shape is None or len(shape) < 3:
@@ -65,305 +94,740 @@ def straight_length(shape: np.ndarray, threshold: float = 1.0) -> float:
 
 class AlternativeSolver(threading.Thread):
     """
-    A more robust secondary solver that tries alternative placement heuristics.
-    It does NOT change the original solver's logic, but extends it with:
-    - robust corner detection
-    - relaxed edge matching
-    - improved fallback behaviour
-    - rotation synchronization with main solver
+    Improved alternative solver that:
+    1. Actually places pieces on a grid (like main solver)
+    2. Has better corner and edge classification
+    3. Provides step-by-step visualization
+    4. Uses more robust edge matching with rotation testing
     """
 
     def __init__(self, puzzle: Puzzle, result_queue: queue.Queue):
         super().__init__()
         self.puzzle = puzzle
         self.result_queue = result_queue
-
-        # ensures this thread does not block program exit
         self.daemon = True
+        
+        # Grid-based placement tracking
+        self.connected_pieces: List[Piece] = []
+        self.used_pieces: Set[int] = set()
+        self.piece_positions: Dict[int, Tuple[int, int]] = {}  # piece_idx -> (grid_x, grid_y)
+        self.grid: Dict[Tuple[int, int], int] = {}  # (grid_x, grid_y) -> piece_idx
+        
+        # Bounds of current filled grid
+        self.min_x = 0
+        self.max_x = 0
+        self.min_y = 0
+        self.max_y = 0
+        
+        self.step_count = 0
 
-        # synchronise rotations from main solver if available
-        self._sync_rotations()
+    # ======================================================================
+    # EDGE ANALYSIS
+    # ======================================================================
 
-    # ----------------------------------------------------------------------
-    # Rotation Synchronisation
-    # ----------------------------------------------------------------------
+    def classify_edge_complexity(self, edge) -> str:
+        """Classify edge as STRAIGHT (border), SIMPLE (hole/head), or COMPLEX."""
+        if edge.type == TypeEdge.BORDER:
+            return "STRAIGHT"
+        curvature = edge_curvature(edge.shape)
+        if curvature < 1.0:
+            return "SIMPLE"
+        return "COMPLEX"
 
-    def _sync_rotations(self):
-        """Synchronises rotations of pieces with the main solver."""
-        for piece in self.puzzle.pieces_:
-            if hasattr(piece, "rotation_angle"):  # main solver sets this
-                rotations = (piece.rotation_angle // 90) % 4
-                for _ in range(rotations):
-                    piece.rotate_edges(1)
+    def get_edge_signature(self, edge) -> Tuple[float, float, str]:
+        """Return a signature for comparing edges: (length, curvature, complexity)."""
+        length = edge_length(edge.shape)
+        curvature = edge_curvature(edge.shape)
+        complexity = self.classify_edge_complexity(edge)
+        return (length, curvature, complexity)
 
-    # ----------------------------------------------------------------------
-    # Corner Detection
-    # ----------------------------------------------------------------------
+    # ======================================================================
+    # CORNER & EDGE DETECTION
+    # ======================================================================
 
     def detect_corners(self) -> List[Piece]:
         """
-        Detect corners by finding pieces with 2 adjacent straight (BORDER) edges.
+        Detect corners by finding pieces with:
+        - 2 adjacent BORDER edges
+        - Both borders are relatively straight
         """
         possible_corners = []
 
         for piece in self.puzzle.pieces_:
             # Check for two consecutive BORDER edges
             for i in range(4):
-                if (piece.edges_[i].type == TypeEdge.BORDER and 
-                    piece.edges_[(i+1) % 4].type == TypeEdge.BORDER):
-                    possible_corners.append(piece)
-                    break
+                edge1 = piece.edges_[i]
+                edge2 = piece.edges_[(i+1) % 4]
+                
+                if edge1.type == TypeEdge.BORDER and edge2.type == TypeEdge.BORDER:
+                    # Check straightness
+                    str1 = edge_straightness(edge1.shape)
+                    str2 = edge_straightness(edge2.shape)
+                    if str1 > 0.5 and str2 > 0.5:
+                        possible_corners.append(piece)
+                        break
 
-        # final fallback: if puzzle is 2x2, allow all candidates
-        if len(possible_corners) == 0 and len(self.puzzle.pieces_) == 4:
+        # Fallback for small puzzles
+        if len(possible_corners) == 0 and len(self.puzzle.pieces_) <= 4:
             return list(self.puzzle.pieces_)
 
         return possible_corners
 
-    # ----------------------------------------------------------------------
-    # Edge Matching Heuristic
-    # ----------------------------------------------------------------------
+    def classify_pieces_by_type(self) -> Dict[str, List[Piece]]:
+        """Classify pieces as CORNER or BORDER or CENTER based on BORDER edges."""
+        result = {"CORNER": [], "BORDER": [], "CENTER": []}
+        
+        for piece in self.puzzle.pieces_:
+            num_borders = sum(1 for e in piece.edges_ if e.type == TypeEdge.BORDER)
+            
+            if num_borders == 2:
+                result["CORNER"].append(piece)
+            elif num_borders == 1:
+                result["BORDER"].append(piece)
+            else:
+                result["CENTER"].append(piece)
+        
+        return result
 
-    def edge_diff(self, e1, e2) -> float:
+    # ======================================================================
+    # EDGE MATCHING WITH ROTATION
+    # ======================================================================
+
+    def edge_diff(self, edge_connected: 'Edge', candidate_piece: 'Piece', candidate_edge: 'Edge') -> float:
+        """Compare edges using the main solver's proven method.
+        
+        Uses stick_pieces and generated_edge_compute which properly respects
+        EDGE_OFFSET from config and provides accurate matching.
+        
+        Returns: Distance score (smaller = better match)
         """
-        Computes similarity between two edges.
-        Smaller = better.
+        # Border edges cannot connect to non-border edges
+        if (edge_connected.type == TypeEdge.BORDER) != (candidate_edge.type == TypeEdge.BORDER):
+            return float('inf')
+        
+        # Both border edges: perfect match
+        if edge_connected.type == TypeEdge.BORDER and candidate_edge.type == TypeEdge.BORDER:
+            return 0.0
+        
+        # Allow any non-border edges to match (relaxed check)
+        # if edge_connected.type == candidate_edge.type:
+        #     return float('inf')
+        
+        try:
+            # Backup all edges of candidate piece before alignment
+            edge_backups = {}
+            for e in candidate_piece.edges_:
+                e.backup_shape()
+                edge_backups[id(e)] = e.shape.copy() if hasattr(e.shape, 'copy') else e.shape
+            
+            # Align pieces physically (this is what the main solver does)
+            stick_pieces(edge_connected, candidate_piece, candidate_edge)
+            
+            # Compute the actual distance using generated_edge_compute
+            # This respects EDGE_OFFSET from config
+            score = generated_edge_compute(edge_connected, candidate_edge)
+            
+            print(f"[DEBUG] edge_diff: edge types {edge_connected.type} vs {candidate_edge.type}, score {score}")
+            
+            # Restore all edges to their original state
+            for e in candidate_piece.edges_:
+                e.restore_backup_shape()
+            
+            return score
+            
+        except Exception:
+            # Ensure restoration on any error
+            try:
+                for e in candidate_piece.edges_:
+                    e.restore_backup_shape()
+            except:
+                pass
+            return float('inf')
+
+    def find_best_match(self, edge, available_pieces: List[Piece]) -> Optional[Tuple[Piece, int, float]]:
+        """Find best-matching piece for given edge from available pieces.
+        
+        Returns: (matching_piece, rotation_amount, score) or None
         """
-        # classic diff
-        diff = abs(edge_length(e1.shape) - edge_length(e2.shape))
-
-        # use angle if present
-        if hasattr(e1, "angle") and hasattr(e2, "angle"):
-            diff += abs(e1.angle - e2.angle) * 0.5
-
-        return diff
-
-    def find_best_match(self, piece: Piece, used_pieces: set) -> Optional[Piece]:
-        """Finds the best-fitting neighbour based on relaxed thresholds."""
-
         best_piece = None
-        best_score = math.inf
+        best_rotation = 0
+        best_score = float('inf')
 
-        for candidate in self.puzzle.pieces_:
-            if self.puzzle.pieces_.index(candidate) in used_pieces:
-                continue
-            if candidate == piece:
-                continue
-
-            # relaxed matching
-            for edge1 in piece.edges_:
-                for edge2 in candidate.edges_:
-                    # border edges never match each other
-                    if edge1.type == TypeEdge.BORDER and edge2.type == TypeEdge.BORDER:
-                        continue
-
-                    score = self.edge_diff(edge1, edge2)
+        for piece in available_pieces:
+            # Try each rotation
+            for rotation in range(4):
+                piece.rotate_edges(1)  # Rotate at start of iteration
+                
+                for candidate_edge in piece.edges_:
+                    score = self.edge_diff(edge, piece, candidate_edge)
                     if score < best_score:
                         best_score = score
-                        best_piece = candidate
+                        best_piece = piece
+                        best_rotation = rotation
 
-        # additional safety: requires a somewhat reasonable score
-        if best_score < 300:   # typical threshold for your extracted pieces
-            return best_piece
+            # Reset piece to original rotation (4 rotations = back to original)
+            for _ in range(4):
+                piece.rotate_edges(1)
+
+        # Accept any match better than infinity (i.e., not rejected for type mismatch)
+        if best_piece is not None and best_score < float('inf'):
+            return (best_piece, best_rotation, best_score)
 
         return None
 
-    # ----------------------------------------------------------------------
-    # Placement
-    # ----------------------------------------------------------------------
+    # ======================================================================
+    # NEIGHBOR-BASED PLACEMENT (Main Solver Approach)
+    # ======================================================================
 
-    def solve(self):
-        """Tries to solve by placing pieces outward from a detected corner."""
-        corners = self.detect_corners()
+    def place_piece_at_grid(self, piece: Piece, coord: Tuple[int, int], rotation: int = 0):
+        """Place a piece at grid coordinate."""
+        piece_idx = self.puzzle.pieces_.index(piece)
+        
+        # Apply rotation
+        for _ in range(rotation % 4):
+            piece.rotate_edges(1)
+        
+        # Track placement
+        self.connected_pieces.append(piece)
+        self.used_pieces.add(piece_idx)
+        self.piece_positions[piece_idx] = coord
+        self.grid[coord] = piece_idx
+        
+        # Update bounds (expand in open directions)
+        x, y = coord
+        self.min_x = min(self.min_x, x - 1)
+        self.max_x = max(self.max_x, x + 1)
+        self.min_y = min(self.min_y, y - 1)
+        self.max_y = max(self.max_y, y + 1)
+        
+        print(f"[AlternativeSolver] Placed piece {piece_idx} at ({x}, {y})")
 
-        if len(corners) == 0:
-            print("[AlternativeSolver] No corners detected → abort.")
-            return
+    def find_neighbors_at_coord(self, coord: Tuple[int, int]) -> List[Tuple[Tuple[int, int], Piece, Directions]]:
+        """Find all placed pieces adjacent to a coordinate with their direction.
+        Return ALL neighbors - let the matching logic decide which edges are valid."""
+        neighbors = []
+        # Check if coordinate is adjacent to any placed pieces
+        for placed_coord in self.grid.keys():
+            # Simple adjacency check: differ by 1 in exactly one dimension
+            dx = abs(coord[0] - placed_coord[0])
+            dy = abs(coord[1] - placed_coord[1])
+            if (dx == 1 and dy == 0) or (dx == 0 and dy == 1):
+                piece_idx = self.grid[placed_coord]
+                direction_tuple = sub_tuple(coord, placed_coord)
+                direction = tuple_to_direction(direction_tuple)
+                if direction:
+                    neighbors.append((placed_coord, self.puzzle.pieces_[piece_idx], direction))
+        return neighbors
 
-        print(f"[AlternativeSolver] corners detected: {[self.puzzle.pieces_.index(c) for c in corners]}")
-
-        used = set()
-        solution = {}
-
-        start_piece = corners[0]
-        used.add(self.puzzle.pieces_.index(start_piece))
-        solution[0] = self.puzzle.pieces_.index(start_piece)
-
-        current = start_piece
-
-        index = 1
-        while len(used) < len(self.puzzle.pieces_):
-            match = self.find_best_match(current, used)
-
-            if match is None:
-                # try random corner fallback if stuck
-                for p in self.puzzle.pieces_:
-                    if self.puzzle.pieces_.index(p) not in used:
-                        match = p
+    def find_best_piece_for_coord(self, coord: Tuple[int, int], available: List[Piece]) -> Optional[Tuple[Piece, int, float]]:
+        """Find the best piece to place at a coordinate given its neighbors."""
+        neighbors = self.find_neighbors_at_coord(coord)
+        
+        if not neighbors:
+            return None
+        
+        best_piece = None
+        best_rotation = 0
+        best_score = float('inf')
+        
+        for candidate_piece in available:
+            for rotation in range(4):
+                candidate_piece.rotate_edges(1)
+                
+                total_score = 0.0
+                valid = True
+                
+                # Try matching against each neighbor
+                for neighbor_coord, neighbor_piece, direction_from_neighbor in neighbors:
+                    neighbor_exposed_edge = neighbor_piece.edge_in_direction(direction_from_neighbor)
+                    candidate_edge = candidate_piece.edge_in_direction(get_opposite_direction(direction_from_neighbor))
+                    
+                    # Check compatibility
+                    if (neighbor_exposed_edge is None or candidate_edge is None or
+                        neighbor_exposed_edge.connected or candidate_edge.connected or
+                        not neighbor_exposed_edge.is_compatible(candidate_edge)):
+                        valid = False
                         break
+                    
+                    # Compute matching score
+                    score = self.edge_diff(neighbor_exposed_edge, candidate_piece, candidate_edge)
+                    if score == float('inf'):
+                        valid = False
+                        break
+                    total_score += score
+                
+                if valid and total_score < best_score:
+                    best_score = total_score
+                    best_piece = candidate_piece
+                    best_rotation = rotation
+            
+            # Reset piece to original rotation state (4 rotations = back to start)
+            for _ in range(4):
+                candidate_piece.rotate_edges(1)
+        
+        if best_piece is not None:
+            return (best_piece, best_rotation, best_score)
+        return None
 
-            used.add(self.puzzle.pieces_.index(match))
-            solution[index] = self.puzzle.pieces_.index(match)
-            current = match
-            index += 1
+    def solve_grid_based(self):
+        """Solve puzzle using simple greedy placement with config.EDGE_OFFSET support.
+        
+        This is a different approach than the main solver: instead of structure-aware
+        (BORDER+FILL), this tries each piece at each position with all rotations,
+        using edge matching that respects config.EDGE_OFFSET.
+        """
+        print("[AlternativeSolver] Starting greedy grid-based solving (different approach)")
+        
+        # Place first piece at origin
+        start_piece = self.puzzle.pieces_[0]
+        self.place_piece_at_grid(start_piece, (0, 0), 0)
+        self._save_progress_image("Step 001 - Initial piece placed at (0,0)")
+        
+        # Do not mark border edges as connected - let them connect to other pieces
+        # for edge in start_piece.edges_:
+        #     if edge.type == TypeEdge.BORDER:
+        #         edge.connected = True
+        
+        # Iteratively place remaining pieces
+        step = 2
+        max_iterations = len(self.puzzle.pieces_) * len(self.puzzle.pieces_)  # Prevent infinite loops
+        iterations = 0
+        
+        while len(self.used_pieces) < len(self.puzzle.pieces_) and iterations < max_iterations:
+            iterations += 1
+            available = [p for i, p in enumerate(self.puzzle.pieces_) if i not in self.used_pieces]
+            
+            best_placement = None
+            best_total_score = float('inf')
+            
+            # Try each available piece
+            for candidate_piece in available:
+                # Try each rotation
+                for rotation in range(4):
+                    candidate_piece.rotate_edges(1)
+                    
+                    # Try each position in expanded grid
+                    for x in range(self.min_x - 1, self.max_x + 2):
+                        for y in range(self.min_y - 1, self.max_y + 2):
+                            if (x, y) in self.grid:
+                                continue  # Position already filled
+                            
+                            # Find neighbors at this position
+                            neighbors = self.find_neighbors_at_coord((x, y))
+                            if not neighbors:
+                                continue  # No neighbors, can't place here
+                            
+                            # DEBUG: Log neighbor findings
+                            print(f"[DEBUG] Position ({x},{y}): found {len(neighbors)} neighbors")
+                            
+                            print(f"[DEBUG] Trying piece {self.puzzle.pieces_.index(candidate_piece)} at ({x}, {y}) rot {rotation}, neighbors: {len(neighbors)}")
+                            
+                            # Test compatibility with all neighbors
+                            # Key insight: BORDER edges don't need to connect to anything
+                            # Only NON-BORDER edges require a valid match
+                            total_score = 0.0
+                            valid = True
+                            
+                            for neighbor_coord, neighbor_piece, direction_from_neighbor in neighbors:
+                                neighbor_edge = neighbor_piece.edge_in_direction(direction_from_neighbor)
+                                candidate_edge = candidate_piece.edge_in_direction(get_opposite_direction(direction_from_neighbor))
+                                
+                                # Skip if either edge is missing
+                                if neighbor_edge is None or candidate_edge is None:
+                                    valid = False
+                                    break
+                                
+                                # If neighbor's edge is BORDER, it doesn't need to connect to anything
+                                if neighbor_edge.type == TypeEdge.BORDER:
+                                    continue
+                                
+                                # If we reach here, neighbor_edge is NON-BORDER
+                                # Both edges must be available (not connected) and compatible
+                                if neighbor_edge.connected or candidate_edge.connected:
+                                    valid = False
+                                    break
+                                
+                                # If candidate edge is BORDER but neighbor is not: incompatible
+                                if candidate_edge.type == TypeEdge.BORDER:
+                                    valid = False
+                                    break
+                                
+                                # Both are NON-BORDER: check compatibility and score
+                                if not neighbor_edge.is_compatible(candidate_edge):
+                                    valid = False
+                                    break
+                                
+                                # Compute edge match score (uses config.EDGE_OFFSET internally)
+                                score = self.edge_diff(neighbor_edge, candidate_piece, candidate_edge)
+                                if score == float('inf'):
+                                    valid = False
+                                    break
+                                
+                                total_score += score
+                            
+                            # Track best placement found
+                            if valid and total_score < best_total_score:
+                                best_total_score = total_score
+                                best_placement = (candidate_piece, rotation, (x, y), total_score)
+                    
+                    # Reset to next rotation
+                
+                # Reset piece to original rotation (4 rotations = back to start)
+                for _ in range(4):
+                    candidate_piece.rotate_edges(1)
+            
+            # If we found a valid placement, use it
+            if best_placement:
+                piece, rotation, coord, score = best_placement
+                
+                # Apply the rotation that was found to be best
+                for _ in range(rotation):
+                    piece.rotate_edges(1)
+                
+                self.place_piece_at_grid(piece, coord, rotation)
+                
+                # Mark edges as connected
+                for neighbor_coord, neighbor_piece, direction_from_neighbor in self.find_neighbors_at_coord(coord):
+                    neighbor_edge = neighbor_piece.edge_in_direction(direction_from_neighbor)
+                    piece_edge = piece.edge_in_direction(get_opposite_direction(direction_from_neighbor))
+                    if neighbor_edge:
+                        neighbor_edge.connected = True
+                    if piece_edge:
+                        piece_edge.connected = True
+                
+                print(f"[AlternativeSolver] Placed piece at {coord} with score {score:.2f}")
+                self._save_progress_image(f"Step {step:03d} - Placed at {coord} (score={score:.2f})")
+                step += 1
+            else:
+                # No valid placement found
+                print(f"[AlternativeSolver] No valid placement found. Stuck after {len(self.used_pieces)} pieces.")
+                break
+        
+        success = len(self.used_pieces) == len(self.puzzle.pieces_)
+        print(f"[AlternativeSolver] Greedy solving complete: {len(self.used_pieces)}/{len(self.puzzle.pieces_)} pieces placed")
+        self._save_progress_image("Final - Greedy solving complete")
+        return success
 
-        # return solution (a simple ordering of piece numbers)
-        self.result_queue.put(solution)
-        self.puzzle.alt_results = {
-            'solution': solution,
-            'corner_candidates': [self.puzzle.pieces_.index(c) for c in corners],
-            'num_pieces': len(self.puzzle.pieces_)
-        }
+    # ======================================================================
+    # GRID-BASED PUZZLE SOLVING (OLD - REPLACED ABOVE)
+    # ======================================================================
 
-        if config.DEBUG_ALT_SOLVER == 1:
-            self._save_debug(corners, solution)
+    # (Removed old solve_grid_based and related methods)
 
-    # ----------------------------------------------------------------------
-    # Debug Output
-    # ----------------------------------------------------------------------
+    # ======================================================================
+    # VISUALIZATION & DEBUG OUTPUT
+    # ======================================================================
 
     def _debug_dir(self) -> str:
-        """Return the debug output directory, clearing it before each run."""
-        import shutil
-        d = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "debug_output")
-        if os.path.exists(d):
-            shutil.rmtree(d)
-        os.makedirs(d)
-        return d
+        """Return the debug output directory.
+        
+        Instead of deleting the directory (which can fail on OneDrive/locked files),
+        we use a timestamped subdirectory to isolate each run's results.
+        """
+        import time
+        base_d = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "debug_output")
+        
+        # Create a timestamped subdirectory for this run
+        timestamp = time.strftime("%Y%m%d_%H%M%S")
+        run_d = os.path.join(base_d, f"alt_solver_{timestamp}")
+        
+        try:
+            os.makedirs(run_d, exist_ok=True)
+            print(f"[AlternativeSolver] Debug output: {run_d}")
+        except (PermissionError, OSError) as e:
+            print(f"[AlternativeSolver] Could not create debug dir, falling back to temp: {e}")
+            # Fallback to temp directory if debug_output dir is inaccessible
+            run_d = os.environ.get("ZOLVER_TEMP_DIR", ".")
+        
+        return run_d
 
-    def _save_debug(self, corners: List[Piece], solution: dict):
-        """
-        Save debug visualisations to debug_output/ in the same style as the
-        main solver's export_pieces():
-          - alt_edges.png   – all pieces with edges coloured by type, corners marked
-          - alt_solution.png – pieces labelled with their solution order number
-        """
+    def _get_bbox_all_pieces(self) -> Tuple[int, int, int, int]:
+        """Get bounding box of all pieces."""
+        bboxes = [p.get_bbox() for p in self.puzzle.pieces_]
+        return (
+            min(b[0] for b in bboxes),
+            min(b[1] for b in bboxes),
+            max(b[2] for b in bboxes),
+            max(b[3] for b in bboxes),
+        )
+
+    def _save_progress_image(self, title: str = ""):
+        """Save a progress image showing current piece placement with edge classification."""
         if not self.puzzle.pieces_:
             return
-
-        pieces = self.puzzle.pieces_
-        bboxes = [p.get_bbox() for p in pieces]
-        minX = min(b[0] for b in bboxes)
-        minY = min(b[1] for b in bboxes)
-        maxX = max(b[2] for b in bboxes)
-        maxY = max(b[3] for b in bboxes)
-
+        
+        minX, minY, maxX, maxY = self._get_bbox_all_pieces()
         h = maxX - minX + 1
         w = maxY - minY + 1
+        
         colored_img = np.zeros((h, w, 3), dtype=np.uint8)
-        edge_img    = np.zeros((h, w, 3), dtype=np.uint8)
-
-        corner_set = set(id(p) for p in corners)
-
-        for piece in pieces:
-            # --- coloured pixels ---
+        edge_img = np.zeros((h, w, 3), dtype=np.uint8)
+        
+        used_piece_set = set(id(p) for i, p in enumerate(self.puzzle.pieces_) if i in self.used_pieces)
+        corners = set(id(p) for p in self.detect_corners())
+        
+        # Draw pieces
+        for i, piece in enumerate(self.puzzle.pieces_):
+            # Draw colored pixels
             for (px, py), c in piece.pixels.items():
                 ix, iy = int(px) - minX, int(py) - minY
                 if 0 <= ix < h and 0 <= iy < w:
                     colored_img[ix, iy] = c
-
-            # --- edges coloured by type ---
+            
+            # Draw edges with color by type
             for e in piece.edges_:
                 for ey, ex in e.shape:
                     ix, iy = int(ex) - minX, int(ey) - minY
                     if 0 <= ix < h and 0 <= iy < w:
                         if e.type == TypeEdge.HOLE:
-                            rgb = (255, 178, 102)   # blue-ish (BGR stored as RGB here)
+                            rgb = (255, 178, 102)  # Orange - HOLE
                         elif e.type == TypeEdge.HEAD:
-                            rgb = (102, 255, 255)
+                            rgb = (102, 255, 255)  # Cyan - HEAD
                         elif e.type == TypeEdge.BORDER:
-                            rgb = (0, 255, 0)
+                            rgb = (0, 255, 0)      # Green - BORDER
                         else:
-                            rgb = (0, 0, 255)
+                            rgb = (0, 0, 255)      # Red - UNDEFINED
                         edge_img[ix, iy] = rgb
-
-            # --- corner dots at edge start points ---
+            
+            # Draw offset contours (tolerance bands) for matching visualization
+            if config.EDGE_OFFSET > 0:
+                all_edge_pts = np.concatenate(
+                    [np.asarray(e.shape, dtype=np.float32)
+                     for e in piece.edges_ if len(e.shape) > 0],
+                    axis=0,
+                ) if any(len(e.shape) > 0 for e in piece.edges_) else None
+                
+                if all_edge_pts is not None:
+                    centroid = tuple(all_edge_pts.mean(axis=0))
+                    for e in piece.edges_:
+                        if len(e.shape) < 2:
+                            continue
+                        offset_pts = e.compute_offset_shape(config.EDGE_OFFSET, centroid)
+                        for oy, ox in offset_pts:
+                            ix, iy = int(ox) - minX, int(oy) - minY
+                            if 0 <= ix < h and 0 <= iy < w:
+                                edge_img[ix, iy] = (0, 165, 255)  # Orange (BGR) offset contour
+            
+            # Mark corners in magenta, other placed in purple
             for e in piece.edges_:
                 if len(e.shape) == 0:
                     continue
                 ey, ex = e.shape[0]
                 ix, iy = int(ex) - minX, int(ey) - minY
                 if 0 <= ix < h and 0 <= iy < w:
-                    dot_color = (255, 0, 255) if id(piece) in corner_set else (128, 0, 128)
-                    cv2.circle(edge_img, (iy, ix), 5, dot_color, -1)
-
-            # --- centre-of-mass marker (from edge contour points) ---
-            edge_pts = [(int(ex), int(ey)) for e in piece.edges_ for ey, ex in e.shape]
-            if edge_pts:
-                com_x = int(np.mean([p[0] for p in edge_pts])) - minX
-                com_y = int(np.mean([p[1] for p in edge_pts])) - minY
-                if 0 <= com_x < h and 0 <= com_y < w:
-                    cv2.drawMarker(edge_img, (com_y, com_x), (0, 255, 255),
-                                   cv2.MARKER_CROSS, 14, 2, cv2.LINE_AA)
-
-        # --- legend on edge image ---
+                    if id(piece) in used_piece_set:
+                        dot_color = (255, 0, 255) if id(piece) in corners else (180, 0, 180)
+                        cv2.circle(edge_img, (iy, ix), 5, dot_color, -1)
+        
+        # Draw legend
         legend = [
-            ((0, 255, 0),     "BORDER (flat edge)"),
-            ((255, 178, 102), "HOLE (indentation)"),
-            ((102, 255, 255), "HEAD (protrusion)"),
+            ((0, 255, 0),     "BORDER (flat)"),
+            ((255, 178, 102), "HOLE (indent)"),
+            ((102, 255, 255), "HEAD (protrus)"),
             ((0, 0, 255),     "UNDEFINED"),
-            ((255, 0, 255),   "Corner candidate"),
+            ((0, 165, 255),   f"OFFSET (+{config.EDGE_OFFSET}px)"),
+            ((255, 0, 255),   "Corner"),
+            ((180, 0, 180),   "Placed"),
         ]
-        box_size, padding = 16, 6
-        font, font_scale, font_thickness = cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1
+        
+        box_size, padding = 14, 5
+        font, font_scale, thickness = cv2.FONT_HERSHEY_SIMPLEX, 0.4, 1
         line_h = box_size + padding
         legend_h = len(legend) * line_h + padding
-        legend_w = 220
-        lx, ly = 10, 10
-        cv2.rectangle(edge_img, (lx - 2, ly - 2),
-                      (lx + legend_w, ly + legend_h), (40, 40, 40), -1)
+        legend_w = 200
+        lx, ly = 8, 8
+        
+        cv2.rectangle(edge_img, (lx - 2, ly - 2), (lx + legend_w, ly + legend_h), (40, 40, 40), -1)
+        
         for i, (color, label) in enumerate(legend):
             y0 = ly + padding + i * line_h
-            cv2.rectangle(edge_img, (lx + 4, y0),
-                          (lx + 4 + box_size, y0 + box_size), color, -1)
-            cv2.putText(edge_img, label,
-                        (lx + 4 + box_size + 6, y0 + box_size - 3),
-                        font, font_scale, (220, 220, 220), font_thickness, cv2.LINE_AA)
+            cv2.rectangle(edge_img, (lx + 4, y0), (lx + 4 + box_size, y0 + box_size), color, -1)
+            cv2.putText(edge_img, label, (lx + 4 + box_size + 5, y0 + box_size - 2),
+                       font, font_scale, (220, 220, 220), thickness, cv2.LINE_AA)
+        
+        # Draw title
+        cv2.putText(edge_img, title, (10, edge_img.shape[0] - 10),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2, cv2.LINE_AA)
+        
+        # Determine output directory
+        if "Final" in title:
+            out_dir = self._debug_dir()
+        else:
+            out_dir = os.environ.get("ZOLVER_TEMP_DIR", ".")
+        
+        os.makedirs(out_dir, exist_ok=True)
+        
+        edge_path = os.path.join(out_dir, f"alt_edges_{self.step_count:03d}.png")
+        colored_path = os.path.join(out_dir, f"alt_colored_{self.step_count:03d}.png")
+        
+        cv2.imwrite(edge_path, edge_img)
+        cv2.imwrite(colored_path, colored_img)
+        
+        print(f"[AlternativeSolver] Saved: {edge_path}")
 
-        # --- solution-order overlay on coloured image ---
-        solution_img = colored_img.copy()
-
-        # Draw internal (non-BORDER) edges as green lines
-        for piece in pieces:
-            for e in piece.edges_:
-                if e.type == TypeEdge.BORDER:
+    def _save_final_puzzle_image(self):
+        """Generate and save the final assembled puzzle image using grid coordinates."""
+        if not self.puzzle.pieces_ or not self.grid:
+            print("[AlternativeSolver] No pieces or grid to save")
+            return
+        
+        try:
+            # Estimate piece size from a sample piece
+            sample_piece = None
+            for piece in self.puzzle.pieces_:
+                if piece.pixels:
+                    sample_piece = piece
+                    break
+            
+            if not sample_piece:
+                print("[AlternativeSolver] No piece with pixels found")
+                return
+            
+            px_list = list(sample_piece.pixels.keys())
+            px_x = [p[0] for p in px_list]
+            px_y = [p[1] for p in px_list]
+            piece_height = max(px_x) - min(px_x) + 1
+            piece_width = max(px_y) - min(px_y) + 1
+            
+            # Calculate canvas size
+            canvas_height = (self.max_x - self.min_x + 1) * piece_height
+            canvas_width = (self.max_y - self.min_y + 1) * piece_width
+            
+            # Create white canvas
+            canvas = np.ones((int(canvas_height), int(canvas_width), 3), dtype=np.uint8) * 255
+            
+            # Draw each piece at its grid position
+            for coord, piece_idx in self.grid.items():
+                piece = self.puzzle.pieces_[piece_idx]
+                grid_x, grid_y = coord
+                
+                # Canvas offset for this grid position
+                canvas_x_offset = (grid_x - self.min_x) * piece_height
+                canvas_y_offset = (grid_y - self.min_y) * piece_width
+                
+                # Get piece pixel bounds
+                if not piece.pixels:
                     continue
-                pts = np.array(
-                    [[int(ey) - minY, int(ex) - minX] for ey, ex in e.shape],
-                    dtype=np.int32
-                )
-                if len(pts) >= 2:
-                    cv2.polylines(solution_img, [pts], isClosed=False,
-                                  color=(0, 255, 0), thickness=1, lineType=cv2.LINE_AA)
-        idx_to_piece = {self.puzzle.pieces_.index(p): p for p in pieces}
-        for order, piece_idx in solution.items():
-            piece = idx_to_piece.get(piece_idx)
-            if piece is None:
-                continue
-            edge_pts = [(int(ex), int(ey)) for e in piece.edges_ for ey, ex in e.shape]
-            if not edge_pts:
-                continue
-            com_x = int(np.mean([p[0] for p in edge_pts])) - minX
-            com_y = int(np.mean([p[1] for p in edge_pts])) - minY
-            label = str(order)
-            (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)
-            tx, ty = com_y - tw // 2, com_x + th // 2
-            cv2.putText(solution_img, label, (tx, ty),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 3, cv2.LINE_AA)
-            cv2.putText(solution_img, label, (tx, ty),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 1, cv2.LINE_AA)
+                
+                piece_px_list = list(piece.pixels.keys())
+                piece_min_x = int(min(p[0] for p in piece_px_list))
+                piece_min_y = int(min(p[1] for p in piece_px_list))
+                
+                # Draw piece pixels
+                for (px, py), color in piece.pixels.items():
+                    canvas_x = canvas_x_offset + int(px) - piece_min_x
+                    canvas_y = canvas_y_offset + int(py) - piece_min_y
+                    
+                    if 0 <= canvas_x < int(canvas_height) and 0 <= canvas_y < int(canvas_width):
+                        canvas[int(canvas_x), int(canvas_y)] = color
+            
+            # Save
+            out_dir = os.environ.get("ZOLVER_TEMP_DIR", ".")
+            os.makedirs(out_dir, exist_ok=True)
+            
+            puzzle_path = os.path.join(out_dir, "alt_puzzle_solved.png")
+            cv2.imwrite(puzzle_path, canvas)
+            print(f"[AlternativeSolver] Final puzzle image saved: {puzzle_path}")
+            
+        except Exception as e:
+            print(f"[AlternativeSolver] Failed to save final puzzle image: {e}")
+            import traceback
+            traceback.print_exc()
 
-        out = self._debug_dir()
-        cv2.imwrite(os.path.join(out, "alt_edges.png"), edge_img)
-        cv2.imwrite(os.path.join(out, "alt_solution.png"), solution_img)
-        print(f"[AlternativeSolver] debug images saved to {out}/alt_edges.png and alt_solution.png")
+    def _save_final_report(self):
+        """Save classification results and final statistics."""
+        from .Enums import directions  # Import the directions list
+        classifications = self.classify_pieces_by_type()
+        
+        # Build adjacency information
+        adjacencies = {}
+        for coord, piece_idx in self.grid.items():
+            neighbors = []
+            for direction in directions:  # Use actual Directions enum values
+                neighbor_coord = add_tuple(coord, direction.value)
+                if neighbor_coord in self.grid:
+                    neighbor_idx = self.grid[neighbor_coord]
+                    neighbors.append({
+                        "direction": str(direction),
+                        "piece_idx": neighbor_idx,
+                        "coordinate": neighbor_coord
+                    })
+            adjacencies[str(coord)] = {
+                "piece_idx": piece_idx,
+                "neighbors": neighbors
+            }
+        
+        report = {
+            "total_pieces": len(self.puzzle.pieces_),
+            "pieces_placed": len(self.used_pieces),
+            "success": len(self.used_pieces) == len(self.puzzle.pieces_),
+            "piece_classification": {
+                "corners": len(classifications["CORNER"]),
+                "borders": len(classifications["BORDER"]),
+                "centers": len(classifications["CENTER"]),
+            },
+            "placements": self.piece_positions,
+            "adjacencies": adjacencies,
+            "grid_bounds": {
+                "min_x": self.min_x,
+                "max_x": self.max_x,
+                "min_y": self.min_y,
+                "max_y": self.max_y,
+            }
+        }
+        
+        out_json = os.path.join(os.environ.get("ZOLVER_TEMP_DIR", "."), "alt_results.json")
+        import json
+        try:
+            with open(out_json, 'w', encoding='utf-8') as f:
+                json.dump(report, f, indent=2, default=str)
+            print(f"[AlternativeSolver] Report saved: {out_json}")
+        except Exception as e:
+            print(f"[AlternativeSolver] Failed to save report: {e}")
+        
+        self.puzzle.alt_results = report
 
-    # ----------------------------------------------------------------------
-    # Thread run()
-    # ----------------------------------------------------------------------
+    # ======================================================================
+    # MAIN SOLVING ENTRY POINT
+    # ======================================================================
+
+    def solve(self):
+        """Main entry point for solving."""
+        try:
+            print("[AlternativeSolver] Starting improved puzzle solver")
+            
+            # Analyze and classify pieces
+            classifications = self.classify_pieces_by_type()
+            print(f"[AlternativeSolver] Piece classification: "
+                  f"CORNERS={len(classifications['CORNER'])}, "
+                  f"BORDERS={len(classifications['BORDER'])}, "
+                  f"CENTERS={len(classifications['CENTER'])}")
+            
+            # Solve using grid-based approach
+            success = self.solve_grid_based()
+            
+            # Save final puzzle image
+            self._save_final_puzzle_image()
+            
+            # Save results
+            self._save_final_report()
+            
+            # Reset all pieces to neutral rotation state (0) before returning
+            for piece in self.puzzle.pieces_:
+                for _ in range(4):
+                    piece.rotate_edges(1)
+            
+            self.result_queue.put({
+                'success': success,
+                'pieces_placed': len(self.used_pieces),
+                'placements': self.piece_positions,
+            })
+            
+        except Exception as e:
+            print(f"[AlternativeSolver] solve() failed: {e}")
+            import traceback
+            traceback.print_exc()
 
     def run(self):
-        try:
-            self.solve()
-        except Exception as e:
-            print("[AlternativeSolver] failed:", e)
+        """Thread run method."""
+        self.solve()
