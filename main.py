@@ -122,9 +122,9 @@ def move_pieces(robot, pieces: list):
     print("[3/3] Starting piece movements")
 
     robot.motors_enable()
+    robot.home_z()
     robot.home_x()
     robot.home_y()
-    robot.home_z()
     robot.reset_rotation()
     robot.go_to_z(Z_UP)
 
