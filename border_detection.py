@@ -50,15 +50,6 @@ def detect_a4_border(frame):
     child_idx = hierarchy[0][ring_idx][2]
     inner_cnt = contours[child_idx] if child_idx != -1 else contours[ring_idx]
 
-    pts = cv2.boxPoints(cv2.minAreaRect(inner_cnt)).astype(np.float32)
-    pts = order_corners(pts)
-
-    dst = np.array([
-        [0,                    0],
-        [BORDER_OUTPUT_W - 1,  0],
-        [BORDER_OUTPUT_W - 1,  BORDER_OUTPUT_H - 1],
-        [0,                    BORDER_OUTPUT_H - 1],
-    ], dtype=np.float32)
-
-    M = cv2.getPerspectiveTransform(pts, dst)
-    return cv2.warpPerspective(frame, M, (BORDER_OUTPUT_W, BORDER_OUTPUT_H))
+    x, y, w, h = cv2.boundingRect(inner_cnt)
+    cropped = frame[y:y + h, x:x + w]
+    return cv2.resize(cropped, (BORDER_OUTPUT_W, BORDER_OUTPUT_H), interpolation=cv2.INTER_AREA)
