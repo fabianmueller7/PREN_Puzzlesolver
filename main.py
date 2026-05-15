@@ -3,7 +3,6 @@ import glob
 import json
 import os
 import sys
-from time import sleep
 
 # ---------------------------------------------------------------------------
 # Robot / pipeline configuration
@@ -125,16 +124,30 @@ def move_pieces(robot, pieces: list):
     robot.motors_enable()
     robot.home_x()
     robot.home_y()
+    robot.home_z()
+    robot.reset_rotation()
+    robot.go_to_z(Z_UP)
 
     for piece in pieces:
         idx   = piece["piece_index"]
         x, y  = piece["start_center_robot_mm"]
         angle = piece["rotation_deg"]
+        x_end, y_end = _grid_coord_to_robot_mm(piece["grid_coord"])
 
-        print(f"  piece {idx}: ({x}, {y}) mm  rotation {angle}°")
+        print(f"  piece {idx}: pick ({x}, {y}) mm  →  place ({x_end}, {y_end}) mm  rotation {angle}°")
 
+        # pick up
         robot.go_to(x, y)
-        sleep(15)
+        robot.go_to_z(Z_PICK)
+        robot.gripper_on()
+        robot.go_to_z(Z_UP)
+
+        # rotate and place
+        robot.gripper_rotate(angle)
+        robot.go_to(x_end, y_end)
+        robot.go_to_z(Z_PLACE)
+        robot.gripper_off()
+        robot.go_to_z(Z_UP)
 
     robot.motors_disable()
     print("[3/3] Done")

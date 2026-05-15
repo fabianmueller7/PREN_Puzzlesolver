@@ -94,80 +94,92 @@ class PicoInterface:
 
     def led_off(self):
         return self.call("led_off")
-    
+
     def indicator_on(self):
         return self.call("indicator_on")
 
     def indicator_off(self):
         return self.call("indicator_off")
-    
-    def magnet_on(self):
-        return self.call("magnet_on")
 
-    def magnet_off(self):
-        return self.call("magnet_off")
+    def vacuum_pump_on(self):
+        return self.call("vacuum_pump_on")
+
+    def vacuum_pump_off(self):
+        return self.call("vacuum_pump_off")
 
     def read_adc(self, pin):
         return self.call("read_adc", pin=pin)
-    
+
     def go_to(self, xCoords, yCoords):
         return self.call("go_to", x=xCoords, y=yCoords)
-    
+
     def go_to_z(self, zCoords):
         return self.call("go_to_z", z=zCoords)
-    
-    def go_to_a(self, aCoords):
-        return self.call("go_to_a", a=aCoords)
+
+    def gripper_rotate(self, aCoords):
+        return self.call("gripper_rotate", a=aCoords)
 
     def home_x(self):
         return self.call("home_x")
-    
+
     def home_y(self):
         return self.call("home_y")
-    
+
     def home_z(self):
         return self.call("home_z")
-    
-    def home_a(self):
-        return self.call("home_a")
-    
+
+    def reset_rotation(self):
+        return self.call("reset_rotation")
+
     def gpo1_on(self):
         return self.call("gpo1_on")
 
     def gpo1_off(self):
         return self.call("gpo1_off")
-    
+
     def gpo2_on(self):
         return self.call("gpo2_on")
 
     def gpo2_off(self):
         return self.call("gpo2_off")
-    
+
     def gpo3_on(self):
         return self.call("gpo3_on")
 
     def gpo3_off(self):
         return self.call("gpo3_off")
-    
+
     def gpo4_on(self):
         return self.call("gpo4_on")
 
     def gpo4_off(self):
         return self.call("gpo4_off")
-    
+
     def gpo5_on(self):
         return self.call("gpo5_on")
 
     def gpo5_off(self):
         return self.call("gpo5_off")
-    
+
+    def gripper_on(self):
+        return self.call("gripper_on")
+
+    def gripper_off(self):
+        return self.call("gripper_off")
+
+    def gripper_down(self):
+        return self.call("gripper_down")
+
+    def gripper_up(self):
+        return self.call("gripper_up")
+
     def motors_enable(self):
         return self.call("motors_enable")
 
     def motors_disable(self):
         return self.call("motors_disable")
-    
-    
+
+
     # ------------------------
     # Cleanup
     # ------------------------
