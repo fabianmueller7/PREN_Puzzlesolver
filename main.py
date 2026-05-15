@@ -11,16 +11,19 @@ ROBOT_PORT    = "/dev/ttyACM0"   # serial port of the Pico
 CAMERA_RESOLUTION = (1920, 1080)  # capture resolution
 
 
-CAPTURE_PATH     = "debug_output/capture.jpg"
-CAPTURE_RAW_PATH = "debug_output/capture_raw.jpg"
+CAPTURE_PATH        = "debug_output/capture.jpg"
+CAPTURE_RAW_PATH    = "debug_output/capture_raw.jpg"
+CAPTURE_COARSE_PATH = "debug_output/capture_coarse.jpg"
 
 # Crop region within the captured frame (pixels).
 # Set to None to use the full frame.
 # Calibrate once by running: python main.py --show-crop
-CROP_X =  503  # left edge   (P2 x)
-CROP_Y =  300  # top edge    (P1 y)
-CROP_W =  906  # width       (1407 - 501)
-CROP_H =  648  # height      (947 - 299)
+CROP_X =  367  # left edge   (P2 x)
+CROP_Y =  203  # top edge    (P1 y)
+CROP_W = 1178  # width       (+30 % of 906)
+CROP_H =  843  # height      (+30 % of 648)
+
+from border_detection import BORDER_DETECTION, BORDER_OUTPUT_W, BORDER_OUTPUT_H, detect_a4_border
 
 
 # ---------------------------------------------------------------------------
@@ -51,6 +54,7 @@ def _crop(frame):
     return frame[y:y2, x:x2]
 
 
+
 def take_picture(save_path: str = CAPTURE_PATH) -> str:
     """Capture one frame from the Pi camera, save raw and cropped versions."""
     import cv2
@@ -66,9 +70,18 @@ def take_picture(save_path: str = CAPTURE_PATH) -> str:
     frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
     cv2.imwrite(CAPTURE_RAW_PATH, frame)
     print(f"[1/3] Raw capture saved:    {CAPTURE_RAW_PATH}  ({frame.shape[1]}×{frame.shape[0]} px)")
-    cropped = _crop(frame)
-    cv2.imwrite(save_path, cropped)
-    print(f"[1/3] Cropped capture saved: {save_path}  ({cropped.shape[1]}×{cropped.shape[0]} px)")
+    coarse = _crop(frame)
+    cv2.imwrite(CAPTURE_COARSE_PATH, coarse)
+    print(f"[1/3] Coarse crop saved:       {CAPTURE_COARSE_PATH}  ({coarse.shape[1]}×{coarse.shape[0]} px)")
+    if BORDER_DETECTION:
+        warped = detect_a4_border(coarse)
+        if warped is not None:
+            cv2.imwrite(save_path, warped)
+            print(f"[1/3] Border-detected capture: {save_path}  ({warped.shape[1]}×{warped.shape[0]} px)")
+            return save_path
+        print("[WARN] Red border not detected — falling back to static crop")
+    cv2.imwrite(save_path, coarse)
+    print(f"[1/3] Cropped capture saved:   {save_path}  ({coarse.shape[1]}×{coarse.shape[0]} px)")
     return save_path
 
 

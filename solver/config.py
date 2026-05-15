@@ -3,11 +3,11 @@ DEBUG_SHOW_DIAGRAMS = 0  # Shows matplotlib diagrams interactively (requires DEB
 DEBUG_ALT_SOLVER = 0     # Saves debug images for the alternative solver to debug_output/
 DEBUG_PIECE_CENTERS = 1  # Writes piece_centers.json to debug_output/ with each piece's start and end center point (0/0 is top left)
 
-EDGE_OFFSET = 12  # pixels (6 pixels ≈ 1mm) — shifts each edge outward to show the manufacturing tolerance band in debug output
+EDGE_OFFSET = 0  # pixels (6 pixels ≈ 1mm) — shifts each edge outward to show the manufacturing tolerance band in debug output
 
 # Affine calibration: maps cropped-image pixel (px, py) → robot mm (rx, ry).
 # Robot zero is top-right; X increases to the left, Y increases downward.
-# Crop region: CROP_X=503, CROP_Y=300 (906×648 px).
+# Crop region: CROP_X=367, CROP_Y=203 (1178×843 px).
 # Calibrated against 3 measured robot positions:
 #   Unten links  px=(242,391) → robot=(222,307)
 #   Unten rechts px=(772,366) → robot=( 50,300)

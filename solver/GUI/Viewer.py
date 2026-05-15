@@ -61,6 +61,19 @@ class Viewer(QMainWindow):
             self.solveAct.setEnabled(True)
             self.solveGreenAct.setEnabled(True)
 
+            from border_detection import BORDER_DETECTION, detect_a4_border
+            import cv2, os
+            if BORDER_DETECTION:
+                frame = cv2.imread(fileName)
+                warped = detect_a4_border(frame) if frame is not None else None
+                if warped is not None:
+                    border_path = os.path.join("debug_output", "capture_border.jpg")
+                    cv2.imwrite(border_path, warped)
+                    self.addImage("Border detected", border_path, addMenu=True)
+                    self.addImage("Base image", fileName, display=False, addMenu=True)
+                    return
+                print("[WARN] Red border not detected in opened image")
+
             self.addImage("Base image", fileName, addMenu=True)
 
     def addImage(self, name, fileName, display=True, addMenu=False):
