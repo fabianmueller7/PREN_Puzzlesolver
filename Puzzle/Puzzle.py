@@ -267,7 +267,17 @@ class Puzzle:
                 self.edge_to_piece[best_e],
             )
 
-            stick_pieces(block_best_e, best_p, best_e, final_stick=True)
+            if config.EDGE_OFFSET > 0:
+                _bloc_pts = [np.asarray(ex.shape, dtype=np.float32)
+                             for ex in block_best_p.edges_ if len(ex.shape) > 0]
+                _centroid_bloc = tuple(np.concatenate(_bloc_pts, axis=0).mean(axis=0)) if _bloc_pts else None
+                _cand_pts = [np.asarray(ex.shape, dtype=np.float32)
+                             for ex in best_p.edges_ if len(ex.shape) > 0]
+                _centroid_cand = tuple(np.concatenate(_cand_pts, axis=0).mean(axis=0)) if _cand_pts else None
+            else:
+                _centroid_bloc = _centroid_cand = None
+            stick_pieces(block_best_e, best_p, best_e, final_stick=True,
+                         centroid_bloc=_centroid_bloc, centroid_cand=_centroid_cand)
 
             self.update_direction(block_best_e, best_p, best_e)
             self.connect_piece(
@@ -321,17 +331,45 @@ class Puzzle:
             if e.connected:
                 continue
 
+            # Centroid of the bloc piece — computed once per bloc edge e.
+            # Used to determine outward direction for the offset shape.
+            if config.EDGE_OFFSET > 0:
+                bloc_pts = [np.asarray(ex.shape, dtype=np.float32)
+                            for ex in new_connected.edges_ if len(ex.shape) > 0]
+                centroid_bloc = tuple(np.concatenate(bloc_pts, axis=0).mean(axis=0)) if bloc_pts else None
+            else:
+                centroid_bloc = None
+
             diff_e = {}
             for piece, edge in edges_to_test:
                 if not e.is_compatible(edge):
                     continue
                 for e2 in piece.edges_:
                     e2.backup_shape()
-                stick_pieces(e, piece, edge)
-                if self.green_:
-                    diff_e[edge] = real_edge_compute(edge, e)
+
+                # Centroid of the candidate piece before positioning — same
+                # coordinate system as edge.shape, so the offset direction is correct.
+                if config.EDGE_OFFSET > 0:
+                    pre_cand_pts = [np.asarray(ex.shape, dtype=np.float32)
+                                    for ex in piece.edges_ if len(ex.shape) > 0]
+                    centroid_cand_pre = tuple(np.concatenate(pre_cand_pts, axis=0).mean(axis=0)) if pre_cand_pts else None
                 else:
-                    diff_e[edge] = generated_edge_compute(edge, e)
+                    centroid_cand_pre = None
+
+                stick_pieces(e, piece, edge, centroid_bloc=centroid_bloc, centroid_cand=centroid_cand_pre)
+
+                # Centroid of the candidate piece after it has been positioned.
+                if config.EDGE_OFFSET > 0:
+                    cand_pts = [np.asarray(ex.shape, dtype=np.float32)
+                                for ex in piece.edges_ if len(ex.shape) > 0]
+                    centroid_cand = tuple(np.concatenate(cand_pts, axis=0).mean(axis=0)) if cand_pts else None
+                else:
+                    centroid_cand = None
+
+                if self.green_:
+                    diff_e[edge] = real_edge_compute(edge, e, centroid_cand, centroid_bloc)
+                else:
+                    diff_e[edge] = generated_edge_compute(edge, e, centroid_cand, centroid_bloc)
                 for e2 in piece.edges_:
                     e2.restore_backup_shape()
 
