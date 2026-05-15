@@ -1,5 +1,5 @@
 # Toggle: set to False to skip red-border detection and use the static crop only.
-BORDER_DETECTION = False
+BORDER_DETECTION = True
 
 BORDER_OUTPUT_W = 906
 BORDER_OUTPUT_H = 648
@@ -33,15 +33,24 @@ def detect_a4_border(frame):
     kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (15, 15))
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
 
-    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    contours, hierarchy = cv2.findContours(mask, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE)
     if not contours:
         return None
 
-    cnt = max(contours, key=cv2.contourArea)
-    if cv2.contourArea(cnt) < 10_000:
+    # Find the largest outer contour (the red ring itself)
+    outer = [(i, cv2.contourArea(c)) for i, c in enumerate(contours)
+             if hierarchy[0][i][3] == -1]
+    if not outer:
+        return None
+    ring_idx, ring_area = max(outer, key=lambda x: x[1])
+    if ring_area < 10_000:
         return None
 
-    pts = cv2.boxPoints(cv2.minAreaRect(cnt)).astype(np.float32)
+    # Prefer the inner hole of the ring so the red border is excluded from the output
+    child_idx = hierarchy[0][ring_idx][2]
+    inner_cnt = contours[child_idx] if child_idx != -1 else contours[ring_idx]
+
+    pts = cv2.boxPoints(cv2.minAreaRect(inner_cnt)).astype(np.float32)
     pts = order_corners(pts)
 
     dst = np.array([
