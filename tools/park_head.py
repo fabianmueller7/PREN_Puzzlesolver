@@ -13,6 +13,7 @@ PORT   = "/dev/ttyACM0"
 robot = PicoInterface(port=PORT)
 try:
     robot.motors_enable()
+    robot.gripper_up()
     robot.go_to(PARK_X, PARK_Y)
     print(f"Head parked at ({PARK_X}, {PARK_Y})")
 finally:
