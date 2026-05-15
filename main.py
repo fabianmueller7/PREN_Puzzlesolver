@@ -104,20 +104,9 @@ def solve_puzzle(image_path: str, green_screen: bool = False) -> list:
 # Pipeline step 3 — move
 # ---------------------------------------------------------------------------
 
-def _grid_coord_to_robot_mm(grid_coord: list) -> tuple:
-    """
-    Convert a solved-puzzle grid coordinate [col, row] to robot mm (x, y).
-
-    TODO: implement the mapping once the A5-frame → robot calibration is known.
-          The A5 target positions (in A5-frame mm) are in
-          debug_output/positions_a5.json after running robot/coordinates.py.
-    """
-    raise NotImplementedError("A5-frame → robot coordinate mapping not yet calibrated")
-
-
 def move_pieces(robot, pieces: list):
     """
-    For each piece: pick up, rotate to solved orientation, put back down.
+    For each piece: pick up, rotate to solved orientation, put back down in place.
     """
     print("[3/3] Starting piece movements")
 
@@ -132,19 +121,16 @@ def move_pieces(robot, pieces: list):
         idx   = piece["piece_index"]
         x, y  = piece["start_center_robot_mm"]
         angle = piece["rotation_deg"]
-        x_end, y_end = _grid_coord_to_robot_mm(piece["grid_coord"])
 
-        print(f"  piece {idx}: pick ({x}, {y}) mm  →  place ({x_end}, {y_end}) mm  rotation {angle}°")
+        print(f"  piece {idx}: rotate {angle}° in place at ({x}, {y}) mm")
 
-        # pick up
         robot.go_to(x, y)
         robot.go_to_z(Z_PICK)
         robot.gripper_on()
         robot.go_to_z(Z_UP)
 
-        # rotate and place
         robot.gripper_rotate(angle)
-        robot.go_to(x_end, y_end)
+
         robot.go_to_z(Z_PLACE)
         robot.gripper_off()
         robot.go_to_z(Z_UP)
