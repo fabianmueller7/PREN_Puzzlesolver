@@ -39,12 +39,6 @@ class Puzzle:
             self.viewer.addLog(msg)
 
     @staticmethod
-    def _pixel_center(piece):
-        xs = [px for (px, _) in piece.pixels]
-        ys = [py for (_, py) in piece.pixels]
-        return (int(np.mean(xs)), int(np.mean(ys)))
-
-    @staticmethod
     def _piece_centroid(piece):
         pts = [np.asarray(e.shape, dtype=np.float32) for e in piece.edges_ if len(e.shape) > 0]
         return tuple(np.concatenate(pts, axis=0).mean(axis=0)) if pts else None
@@ -79,7 +73,7 @@ class Puzzle:
             return
 
         if config.DEBUG_PIECE_CENTERS == 1:
-            _start_centers = {id(p): self._pixel_center(p) for p in self.pieces_}
+            _start_centers = {id(p): self._piece_centroid(p) for p in self.pieces_}
 
         connected_pieces = []
         border_pieces = self.border_pieces.copy()
@@ -95,9 +89,7 @@ class Puzzle:
 
         self.export_pieces(
             os.path.join(os.environ["ZOLVER_TEMP_DIR"], "stick{0:03d}.png".format(1)),
-            os.path.join(os.environ["ZOLVER_TEMP_DIR"], "colored{0:03d}.png".format(1)),
             "Border types",
-            "Step {0:03d}".format(1),
             display_border=True,
         )
 
@@ -119,7 +111,6 @@ class Puzzle:
             for edge in start_piece.edges_:
                 for idx, pt in enumerate(edge.shape):
                     edge.shape[idx] = rotate(pt, angle, edge_center)
-            start_piece.rotate(angle, center)
 
         self.extremum = (0, 0, 1, 1)
         self.strategy = Strategy.BORDER
@@ -132,7 +123,6 @@ class Puzzle:
         self.translate_puzzle()
         self.export_pieces(
             os.path.join(os.environ["ZOLVER_TEMP_DIR"], "stick.png"),
-            os.path.join(os.environ["ZOLVER_TEMP_DIR"], "colored.png"),
             display=False,
         )
 
@@ -141,13 +131,13 @@ class Puzzle:
             records = []
             for i, p in enumerate(self.pieces_):
                 sc = _start_centers[id(p)]
-                ec = self._pixel_center(p)
-                # _pixel_center returns (row, col); pixel_to_robot expects (col, row) = (x, y)
-                robot_start = config.pixel_to_robot(sc[1], sc[0])
+                ec = self._piece_centroid(p)
+                # _piece_centroid returns (col, row); pixel_to_robot expects (col, row) = (x, y)
+                robot_start = config.pixel_to_robot(sc[0], sc[1])
                 records.append({
                     "piece_index": i,
                     "grid_coord": list(p.coord) if hasattr(p, "coord") else None,
-                    "start_center_px": [int(sc[1]), int(sc[0])],
+                    "start_center_px": [int(sc[0]), int(sc[1])],
                     "start_center_robot_mm": list(robot_start),
                     "end_center": [int(ec[0]), int(ec[1])],
                     "rotation_deg": p.rotation_steps * 90,
@@ -202,7 +192,7 @@ class Puzzle:
 
             _centroid_bloc = self._piece_centroid(block_best_p) if config.EDGE_OFFSET > 0 else None
             _centroid_cand = self._piece_centroid(best_p)       if config.EDGE_OFFSET > 0 else None
-            stick_pieces(block_best_e, best_p, best_e, final_stick=True,
+            stick_pieces(block_best_e, best_p, best_e,
                          centroid_bloc=_centroid_bloc, centroid_cand=_centroid_cand)
 
             self.update_direction(block_best_e, best_p, best_e)
@@ -215,8 +205,6 @@ class Puzzle:
 
             self.export_pieces(
                 os.path.join(os.environ["ZOLVER_TEMP_DIR"], "stick{0:03d}.png".format(len(self.connected_directions))),
-                os.path.join(os.environ["ZOLVER_TEMP_DIR"], "colored{0:03d}.png".format(len(self.connected_directions))),
-                name_colored="Step {0:03d}".format(len(self.connected_directions)),
             )
 
         return connected_pieces
@@ -448,14 +436,11 @@ class Puzzle:
         for p in self.pieces_:
             for e in p.edges_:
                 e.shape -= (minX, minY)
-            p.translate(minX, minY)
 
     def export_pieces(
         self,
         path_contour,
-        path_colored,
         name_contour=None,
-        name_colored=None,
         display=True,
         display_border=False,
     ):
@@ -464,29 +449,9 @@ class Puzzle:
 
         # e.shape stores (col, row) — col maps to the Y axis, row to the X axis.
         minX, minY, maxX, maxY = self.get_bbox()
-        edge_shapes = [e.shape for p in self.pieces_ for e in p.edges_ if len(e.shape) > 0]
-        if edge_shapes:
-            all_pts = np.concatenate(edge_shapes)
-            minY = min(minY, int(all_pts[:, 0].min()))
-            maxY = max(maxY, int(all_pts[:, 0].max()))
-            minX = min(minX, int(all_pts[:, 1].min()))
-            maxX = max(maxX, int(all_pts[:, 1].max()))
-
-        colored_img = np.zeros((maxX - minX + 1, maxY - minY + 1, 3))
         border_img  = np.zeros((maxX - minX + 1, maxY - minY + 1, 3))
 
         for piece in self.pieces_:
-            tmp = [
-                (x - minX, y - minY, c)
-                for (x, y), c in piece.pixels.items()
-                if 0 <= x - minX < colored_img.shape[0]
-                and 0 <= y - minY < colored_img.shape[1]
-            ]
-            xs = [int(t[0]) for t in tmp]
-            ys = [int(t[1]) for t in tmp]
-            cs = [t[2] for t in tmp]
-            colored_img[xs, ys] = cs
-
             if config.DEBUG_FILE_OUTPUT == 1:
                 for e in piece.edges_:
                     for ey, ex in e.shape:
@@ -527,10 +492,10 @@ class Puzzle:
                     if 0 <= ix < border_img.shape[0] and 0 <= iy < border_img.shape[1]:
                         cv2.circle(border_img, (iy, ix), 4, (128, 0, 128), -1)
 
-                if piece.pixels:
-                    com_x, com_y = self._pixel_center(piece)
-                    com_x -= minX
-                    com_y -= minY
+                centroid = self._piece_centroid(piece)
+                if centroid is not None:
+                    com_x = int(centroid[1]) - minX  # row - minX
+                    com_y = int(centroid[0]) - minY  # col - minY
                     if 0 <= com_x < border_img.shape[0] and 0 <= com_y < border_img.shape[1]:
                         cv2.drawMarker(border_img, (com_y, com_x), (0, 255, 255),
                                        cv2.MARKER_CROSS, 14, 2, cv2.LINE_AA)
@@ -556,8 +521,6 @@ class Puzzle:
             config.save_debug_img(path_contour, border_img)
             if config.DEBUG_SHOW_DIAGRAMS == 1:
                 show_image(border_img, "contour category image")
-
-        config.save_debug_img(path_colored, colored_img)
 
     def compute_possible_size(self, nb_piece, nb_border) -> list[tuple]:
         nb_edge_border = nb_border - 4

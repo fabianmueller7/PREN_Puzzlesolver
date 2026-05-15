@@ -4,14 +4,13 @@ from .. import config
 from .utils import rotate, angle_between
 
 
-def stick_pieces(bloc_e, p, e, final_stick=False, centroid_bloc=None, centroid_cand=None):
+def stick_pieces(bloc_e, p, e, centroid_bloc=None, centroid_cand=None):
     """
     Stick an edge of a piece to the bloc of already resolved pieces.
 
     :param bloc_e: bloc edge already solved
     :param p: piece to add to the bloc
     :param e: edge of p to stick
-    :param final_stick: if True, also transform the pixel data of p
     :param centroid_bloc: centroid of the bloc piece (all edge points averaged).
                           When provided and EDGE_OFFSET > 0, alignment uses the
                           outward-offset edge endpoints instead of the raw contour.
@@ -68,42 +67,3 @@ def stick_pieces(bloc_e, p, e, final_stick=False, centroid_bloc=None, centroid_c
     correction_int = np.round(gap / 2.0).astype(int)
     for edge in p.edges_:
         edge.shape = edge.shape + correction_int
-
-    if final_stick:
-        # Rotation origin (row, col order as used by rotate())
-        b_e0, b_e1 = float(rot_center[0]), float(rot_center[1])
-
-        # Edges are: translate → rotate → apply correction_int.
-        # Pixels must follow the same order: translate first (no correction yet),
-        # then rotate, then shift target range by correction as a post-rotation
-        # translation.  Folding correction into the pre-rotation translate would
-        # produce a (I-R)*correction_int positional error for any non-zero angle.
-        p.translate(int(translation[1]), int(translation[0]))
-
-        # correction in pixel (col, row) space — edges store (row, col) so swap
-        corr_col = int(correction_int[1])
-        corr_row = int(correction_int[0])
-
-        # Bounding boxes of origin/target space (target shifted by post-rotation correction)
-        minX, minY, maxX, maxY = p.get_bbox()
-        minX2, minY2, maxX2, maxY2 = p.rotate_bbox(angle, (b_e1, b_e0))
-        minX2 += corr_col;  maxX2 += corr_col
-        minY2 += corr_row;  maxY2 += corr_row
-
-        # Recreate image from pixels
-        img_p = p.get_image()
-
-        # Retrieve new pixels by rotated target space into origin space.
-        # Strip the post-rotation correction before rotating back.
-        pixels = {}
-        for px in range(minX2, maxX2 + 1):
-            for py in range(minY2, maxY2 + 1):
-                qx, qy = rotate((px - corr_col, py - corr_row), -angle, (b_e1, b_e0))
-                qx, qy = int(qx), int(qy)
-                if (
-                    minX <= qx <= maxX
-                    and minY <= qy <= maxY
-                    and img_p[qx - minX, qy - minY][0] != -1
-                ):
-                    pixels[(px, py)] = img_p[qx - minX, qy - minY]
-        p.pixels = pixels

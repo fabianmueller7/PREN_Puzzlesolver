@@ -458,19 +458,13 @@ def export_contours_without_colormatching(
         if corners is None or len(edges_shape) != 4:
             continue
 
-        mask_full = cv2.drawContours(np.zeros_like(img_bw), contours, idx, 255, -1)
-        img_piece = np.zeros_like(img)
-        img_piece[mask_full == 255] = img[mask_full == 255]
-        xs, ys = np.where(mask_full == 255)
-        pixels = {(x, y): img_piece[x, y] for x, y in zip(xs, ys)}
-
         dir_map = assign_directions_from_geometry(edges_shape)
         edges = [
             Edge(edges_shape[i], None, edge_type=types_edges[i], direction=dir_map[i],
                  connected=types_edges[i] == TypeEdge.BORDER)
             for i in range(4)
         ]
-        puzzle_pieces.append(PuzzlePiece(edges, pixels))
+        puzzle_pieces.append(PuzzlePiece(edges))
 
         if export_img:
             mask_border = np.zeros_like(img_bw)

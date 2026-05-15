@@ -1,65 +1,37 @@
 import numpy as np
 
 from .Enums import TypeEdge, TypePiece, rotate_direction
-from .utils import rotate
 
 
 class PuzzlePiece:
     """
     Wrapper used to store informations about pieces of the puzzle.
     Contains the position of the piece in the puzzle graph, a list of edges,
-    the list of pixels composing the piece, the number of borders and the type
-    of the piece.
+    the number of borders and the type of the piece.
+    Piece geometry is represented entirely by edge contours (edge.shape arrays).
     """
 
-    def __init__(self, edges, pixels):
+    def __init__(self, edges):
         self.position = (0, 0)
         self.edges_ = edges
-        self.pixels = pixels
         self.nBorders_ = self.number_of_border()
         self.type = TypePiece(self.nBorders_)
         self.is_border = self.number_of_border() > 0
         self.rotation_steps = 0  # cumulative 90° CW steps applied during solving
 
     def get_bbox(self):
-        x = list(map(lambda p: p[0], self.pixels))
-        y = list(map(lambda p: p[1], self.pixels))
-        return int(min(x)), int(min(y)), int(max(x)), int(max(y))
-
-    def rotate_bbox(self, angle, around):
-        # Rotate corners only to optimize
-        minX, minY, maxX, maxY = self.get_bbox()
-        rotated = [
-            rotate((x, y), angle, around) for x in [minX, maxX] for y in [minY, maxY]
-        ]
-        rotatedX = [p[0] for p in rotated]
-        rotatedY = [p[1] for p in rotated]
-        return (
-            int(min(rotatedX)),
-            int(min(rotatedY)),
-            int(max(rotatedX)),
-            int(max(rotatedY)),
-        )
+        # e.shape stores (col, row) pairs; returns (minX=min_row, minY=min_col, maxX=max_row, maxY=max_col)
+        shapes = [e.shape for e in self.edges_ if len(e.shape) > 0]
+        if not shapes:
+            return (0, 0, 0, 0)
+        all_pts = np.concatenate(shapes)
+        rows = all_pts[:, 1]
+        cols = all_pts[:, 0]
+        return (int(rows.min()), int(cols.min()), int(rows.max()), int(cols.max()))
 
     def get_center(self):
         minX, minY, maxX, maxY = self.get_bbox()
         return ((minX + maxX) // 2, (minY + maxY) // 2)
-
-    def translate(self, dx, dy):
-        self.pixels = {(x + dx, y + dy): c for (x, y), c in self.pixels.items()}
-
-    def rotate(self, angle, around):
-        self.pixels = {
-            rotate((x, y), angle, around, to_int=True): c
-            for (x, y), c in self.pixels.items()
-        }
-
-    def get_image(self):
-        minX, minY, maxX, maxY = self.get_bbox()
-        img_p = np.full((maxX - minX + 1, maxY - minY + 1, 3), -1)
-        for (x, y), c in self.pixels.items():
-            img_p[x - minX, y - minY] = c
-        return img_p
 
     def number_of_border(self):
         """Fast computations of the number of borders"""
