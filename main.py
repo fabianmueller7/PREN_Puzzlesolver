@@ -10,9 +10,6 @@ import sys
 ROBOT_PORT    = "/dev/ttyACM0"   # serial port of the Pico
 CAMERA_RESOLUTION = (1920, 1080)  # capture resolution
 
-Z_UP    =   0   # safe travel height [mm]  — TODO: calibrate
-Z_PICK  = -50   # height to pick up a piece [mm]  — TODO: calibrate
-Z_PLACE = -50   # height to place a piece [mm]  — TODO: calibrate
 
 CAPTURE_PATH     = "debug_output/capture.jpg"
 CAPTURE_RAW_PATH = "debug_output/capture_raw.jpg"
@@ -115,7 +112,7 @@ def move_pieces(robot, pieces: list):
     robot.home_x()
     robot.home_y()
     robot.reset_rotation()
-    robot.go_to_z(Z_UP)
+    robot.gripper_up()
 
     for piece in pieces:
         idx   = piece["piece_index"]
@@ -125,15 +122,15 @@ def move_pieces(robot, pieces: list):
         print(f"  piece {idx}: rotate {angle}° in place at ({x}, {y}) mm")
 
         robot.go_to(x, y)
-        robot.go_to_z(Z_PICK)
+        robot.gripper_down()
         robot.gripper_on()
-        robot.go_to_z(Z_UP)
+        robot.gripper_up()
 
         robot.gripper_rotate(angle)
 
-        robot.go_to_z(Z_PLACE)
+        robot.gripper_down()
         robot.gripper_off()
-        robot.go_to_z(Z_UP)
+        robot.gripper_up()
 
     robot.motors_disable()
     print("[3/3] Done")
