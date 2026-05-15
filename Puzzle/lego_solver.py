@@ -5,6 +5,7 @@ LEGO Puzzle Solver - Third Solver Method for PREN_Puzzlesolver
 import threading
 import queue
 import os
+import time
 from typing import List, Optional, Tuple, Dict, Set
 import numpy as np
 from .Enums import TypeEdge, Directions, get_opposite_direction, directions
@@ -252,8 +253,57 @@ class LegoSolver(threading.Thread):
                     'dimension': final_dim
                 }
             else:
-                self.log("Failed to find a valid arrangement for any dimension.")
-                result = {'success': False, 'pieces_placed': 0}
+                # If the explicit tree search fails, wait briefly for the
+                # AlternativeSolver to finish and provide placements, then
+                # use those placements as a fallback. This helps when the
+                # strict tree-search cannot find an arrangement but the
+                # alternative already solved it in the background.
+                wait_for_alt_seconds = 30.0
+                waited = 0.0
+                interval = 0.5
+                while waited < wait_for_alt_seconds and not hasattr(self.puzzle, 'alt_results'):
+                    time.sleep(interval)
+                    waited += interval
+
+                if hasattr(self.puzzle, 'alt_results') and isinstance(self.puzzle.alt_results, dict) and self.puzzle.alt_results.get('success'):
+                    try:
+                        self.log("Tree-search failed — falling back to AlternativeSolver placements")
+                        placements = self.puzzle.alt_results.get('placements', {})
+                        # placements keys may be strings; build grid and shift to positive coords
+                        coords = [(int(k), int(v[0]), int(v[1])) for k, v in placements.items()]
+                        xs = [c[1] for c in coords]
+                        ys = [c[2] for c in coords]
+                        min_x, max_x = min(xs), max(xs)
+                        min_y, max_y = min(ys), max(ys)
+                        w, h = max_x - min_x + 1, max_y - min_y + 1
+                        shifted_grid = {}
+                        for pid, x, y in coords:
+                            shifted_grid[(x - min_x, y - min_y)] = self.puzzle.pieces_[pid]
+                        self.grid = shifted_grid
+                        # Align pieces physically and export
+                        self.align_all_pieces(w, h)
+                        self.puzzle.translate_puzzle()
+                        temp_dir = os.environ.get("ZOLVER_TEMP_DIR", ".")
+                        self.puzzle.export_pieces(
+                            os.path.join(temp_dir, "lego_stick.png"),
+                            os.path.join(temp_dir, "lego_colored.png"),
+                            display=False,
+                        )
+                        placements_out = {pid: (x - min_x, y - min_y) for pid, x, y in coords}
+                        result = {
+                            'success': True,
+                            'pieces_placed': len(self.grid),
+                            'total_pieces': len(self.puzzle.pieces_),
+                            'placements': placements_out,
+                            'dimension': (w, h),
+                            'fallback': 'alternative_solver'
+                        }
+                    except Exception as e:
+                        self.log(f"Fallback to alternative placements failed: {e}")
+                        result = {'success': False, 'pieces_placed': 0, 'error': str(e)}
+                else:
+                    self.log("Failed to find a valid arrangement for any dimension.")
+                    result = {'success': False, 'pieces_placed': 0}
 
             self.puzzle.lego_results = result
             self.result_queue.put(result)

@@ -79,21 +79,36 @@ def main():
     print('Main solver finished. Checking for alternative solver results...')
     
     # Start the alternative solver.
-    alternative = AlternativeSolver(puzzle, queue.Queue()) 
+    alt_result_queue = queue.Queue()
+    alternative = AlternativeSolver(puzzle, alt_result_queue)
     alternative.start()  # Start the alternative solver thread (if not already started by Puzzle)
 
-
-    # Wait for alt_results to appear (poll)
+    # Wait for alt_results to appear or for the alternative solver to return a result.
     waited = 0.0
     interval = 0.5
+    alt = None
     while waited < args.wait_alt_seconds:
         if hasattr(puzzle, 'alt_results'):
+            alt = puzzle.alt_results
             break
-        time.sleep(interval)
+        try:
+            alt = alt_result_queue.get(timeout=interval)
+            break
+        except queue.Empty:
+            pass
         waited += interval
 
-    if hasattr(puzzle, 'alt_results'):
+    if alt is None and hasattr(puzzle, 'alt_results'):
         alt = puzzle.alt_results
+
+    if alt is None:
+        # Try one final join if the thread is still alive
+        if alternative.is_alive():
+            alternative.join(timeout=2.0)
+        if hasattr(puzzle, 'alt_results'):
+            alt = puzzle.alt_results
+
+    if alt is not None:
         out_json = os.path.join(debug_dir, 'alt_results.json')
         try:
             with open(out_json, 'w', encoding='utf-8') as f:
@@ -104,13 +119,9 @@ def main():
         # Print brief summary
         if isinstance(alt, dict):
             print('\nAlternative solver summary:')
-            for k in ['num_pieces', 'corner_candidates', 'possible_corners']:
+            for k in ['total_pieces', 'pieces_placed', 'success']:
                 if k in alt:
                     print(f' - {k}:', alt[k])
-            if 'groups' in alt:
-                print(' - groups (count, avg_length):')
-                for g in alt['groups']:
-                    print(f"    count={g['count']}, avg_length={g['avg_length']:.1f}")
         else:
             print('Alternative solver result (non-dict):', alt)
     else:

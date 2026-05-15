@@ -456,12 +456,12 @@ class Puzzle:
                         if p.type == TypePiece.ANGLE and i < 2:
                             diff_score += 500 
 
-                            if diff_score < min_diff:
-                                best_bloc_e, best_e, min_diff = (
-                                    last_test[0],
-                                    last_test[1],
-                                    diff_score,
-                                )
+                        if diff_score < min_diff:
+                            best_bloc_e, best_e, min_diff = (
+                                last_test[0],
+                                last_test[1],
+                                diff_score,
+                            )
                 if best_e is not None:
                     break
                 elif len(best_coord):
@@ -808,7 +808,7 @@ class Puzzle:
             
             # Versuche Neu-Platzierung mit der Standard-Solve-Routine
             self.strategy = Strategy.FILL
-            self.solve(self.connected_directions, removed_pieces)
+            self.solve([item[1] for item in self.connected_directions], removed_pieces)
             
             # Re-evaluierung
             new_suspicious, new_errors = self._evaluate_final_edge_scores()

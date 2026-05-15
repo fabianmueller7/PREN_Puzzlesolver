@@ -45,6 +45,9 @@ def stick_pieces(bloc_e, p, e, final_stick=False, centroid_bloc=None, centroid_c
 
     # First move the first corner of piece to the corner of bloc edge
     for edge in p.edges_:
+        # Ensure float coordinates to support sub-pixel rotation and translation (NumPy 2.x safety)
+        if edge.shape.dtype.kind != 'f':
+            edge.shape = edge.shape.astype(float)
         edge.shape += translation
 
     # Then rotate piece of `angle` degrees centered on the corner

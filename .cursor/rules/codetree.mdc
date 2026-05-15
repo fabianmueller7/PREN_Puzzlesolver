@@ -1,0 +1,31 @@
+---
+description: CodeTree — token-saving MCP tools for reads, search, file tree, outlines, probes
+alwaysApply: true
+---
+
+# CodeTree
+
+Use CodeTree MCP tools instead of default file/search tools when available, and follow these
+token-saving rules:
+
+- `codetree_outline` — prefer this over `codetree_read` when you only need a file's exports/shape.
+  It returns symbols, imports, hash, and size. **No body**, much cheaper than reading.
+- `codetree_probe` — prefer this over `codetree_search` when you only need to know "where does X
+  appear?". Returns line numbers only, **no snippets**.
+- `codetree_read` — for actual content. ALWAYS pass `session_id` so the server can short-circuit
+  with `unchanged_since_last_read` when you've already read the same content this session. If you
+  saved the previous response's `hash`, pass it as `expected_hash` to skip the body entirely.
+- `codetree_read` returns `hash` + `estimatedTokens`-style metadata. **Do not re-read** a file with
+  the same hash; refer to your prior response.
+- `codetree_search` — small `limit` is fine; pass `cursor` if you need more. Use
+  `include_signature=false` (default) for fuzzy queries.
+- `codetree_structure` — pass `format='text'` for ~40% fewer tokens than JSON when you just want
+  to scan the tree.
+- `codetree_summary` — at session start, gives `totalEstimatedTokens` and per-file estimates;
+  use them to rank what to read by **cost**.
+- `codetree_memory` — `get_context` for prior sessions; `save_insight` for durable findings.
+- `codetree_find_refs` for references; `codetree_edit` / `codetree_write` when editing through
+  CodeTree (no prior Read needed).
+
+These tools use the indexed cache and reduce token usage. Prefer cheaper tools first
+(outline → probe → search → read).

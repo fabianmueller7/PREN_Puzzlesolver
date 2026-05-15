@@ -2,3 +2,5 @@
 __pycache__/
 *.py[cod]
 **/debug_output/
+# CodeTree cache
+.codetree/

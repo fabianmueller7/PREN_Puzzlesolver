@@ -1,0 +1,59 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Read|Grep|Glob",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"C:/Users/valer/AppData/Roaming/npm/node_modules/codetree-claude/dist/hook/pre-tool-use.js\""
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Read|Grep|Glob|Edit|Write|codetree_read|codetree_search",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"C:/Users/valer/AppData/Roaming/npm/node_modules/codetree-claude/dist/hook/post-tool-use.js\""
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"C:/Users/valer/AppData/Roaming/npm/node_modules/codetree-claude/dist/hook/session-start.js\""
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"C:/Users/valer/AppData/Roaming/npm/node_modules/codetree-claude/dist/hook/pre-compact.js\""
+          }
+        ]
+      }
+    ],
+    "PostCompact": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"C:/Users/valer/AppData/Roaming/npm/node_modules/codetree-claude/dist/hook/post-compact.js\""
+          }
+        ]
+      }
+    ]
+  }
+}

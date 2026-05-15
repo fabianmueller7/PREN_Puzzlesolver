@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "codetree": {
+      "command": "node",
+      "args": [
+        "C:/Users/valer/AppData/Roaming/npm/node_modules/codetree-claude/dist/server/mcp-server.js"
+      ],
+      "cwd": "C:/Users/valer/OneDrive - Hochschule Luzern/Sem 4/PREN1/Algorithmus/PREN_Puzzlesolver",
+      "env": {
+        "CODETREE_PROJECT_ROOT": "C:/Users/valer/OneDrive - Hochschule Luzern/Sem 4/PREN1/Algorithmus/PREN_Puzzlesolver"
+      }
+    }
+  }
+}

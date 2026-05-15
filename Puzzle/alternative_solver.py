@@ -205,9 +205,10 @@ class AlternativeSolver(threading.Thread):
         if (edge_connected.type == TypeEdge.BORDER) != (candidate_edge.type == TypeEdge.BORDER):
             return float('inf')
         
-        # Both border edges: perfect match
+        # Both border edges are allowed to match, but still require geometric
+        # comparison to avoid placing pieces incorrectly along a border.
         if edge_connected.type == TypeEdge.BORDER and candidate_edge.type == TypeEdge.BORDER:
-            return 0.0
+            pass
         
         # Allow any non-border edges to match (relaxed check)
         # if edge_connected.type == candidate_edge.type:
@@ -301,6 +302,17 @@ class AlternativeSolver(threading.Thread):
         self.max_y = max(self.max_y, y + 1)
         
         print(f"[AlternativeSolver] Placed piece {piece_idx} at ({x}, {y})")
+
+    def _compute_placed_pixel_set(self) -> Set[Tuple[int, int]]:
+        """Return the union of pixel coordinates for all already placed pieces."""
+        placed_pixels = set()
+        for idx in self.used_pieces:
+            placed_pixels.update(self.puzzle.pieces_[idx].pixels.keys())
+        return placed_pixels
+
+    def _test_overlap_after_stick(self, candidate_piece: Piece, placed_pixels: Set[Tuple[int, int]]) -> bool:
+        """Return True if the candidate piece overlaps any already placed pixels."""
+        return any(pixel in placed_pixels for pixel in candidate_piece.pixels.keys())
 
     def find_neighbors_at_coord(self, coord: Tuple[int, int]) -> List[Tuple[Tuple[int, int], Piece, Directions]]:
         """Find all placed pieces adjacent to a coordinate with their direction.
@@ -400,6 +412,9 @@ class AlternativeSolver(threading.Thread):
             best_placement = None
             best_total_score = float('inf')
             
+            # Precompute the currently placed pixel set for collision checking.
+            placed_pixels = self._compute_placed_pixel_set()
+
             # Try each available piece
             for candidate_piece in available:
                 # Try each rotation
@@ -437,22 +452,11 @@ class AlternativeSolver(threading.Thread):
                                     valid = False
                                     break
                                 
-                                # If neighbor's edge is BORDER, it doesn't need to connect to anything
-                                if neighbor_edge.type == TypeEdge.BORDER:
-                                    continue
-                                
-                                # If we reach here, neighbor_edge is NON-BORDER
-                                # Both edges must be available (not connected) and compatible
+                                # Border edges must also be matched to another border edge
                                 if neighbor_edge.connected or candidate_edge.connected:
                                     valid = False
                                     break
-                                
-                                # If candidate edge is BORDER but neighbor is not: incompatible
-                                if candidate_edge.type == TypeEdge.BORDER:
-                                    valid = False
-                                    break
-                                
-                                # Both are NON-BORDER: check compatibility and score
+
                                 if not neighbor_edge.is_compatible(candidate_edge):
                                     valid = False
                                     break
@@ -466,9 +470,43 @@ class AlternativeSolver(threading.Thread):
                                 total_score += score
                             
                             # Track best placement found
-                            if valid and total_score < best_total_score:
-                                best_total_score = total_score
-                                best_placement = (candidate_piece, rotation, (x, y), total_score)
+                            if valid:
+                                # Perform a temporary physical stick test to ensure the candidate
+                                # does not collide with already placed pieces.
+                                save_state = candidate_piece.get_current_state()
+                                test_neighbor_coord, test_neighbor_piece, test_direction = neighbors[0]
+                                test_neighbor_edge = test_neighbor_piece.edge_in_direction(test_direction)
+                                test_candidate_edge = candidate_piece.edge_in_direction(
+                                    get_opposite_direction(test_direction)
+                                )
+                                stick_pieces(
+                                    test_neighbor_edge,
+                                    candidate_piece,
+                                    test_candidate_edge,
+                                    final_stick=True,
+                                    centroid_bloc=test_neighbor_piece.get_center(),
+                                    centroid_cand=candidate_piece.get_center(),
+                                )
+                                overlap = self._test_overlap_after_stick(candidate_piece, placed_pixels)
+                                candidate_piece.set_state(save_state)
+                                if overlap:
+                                    valid = False
+                                elif total_score < best_total_score:
+                                    best_total_score = total_score
+                                    neighbor_coord, neighbor_piece, direction_from_neighbor = neighbors[0]
+                                    best_neighbor_exposed_edge = neighbor_piece.edge_in_direction(direction_from_neighbor)
+                                    best_candidate_edge = candidate_piece.edge_in_direction(
+                                        get_opposite_direction(direction_from_neighbor)
+                                    )
+                                    best_placement = (
+                                        candidate_piece,
+                                        rotation,
+                                        (x, y),
+                                        total_score,
+                                        neighbor_piece,
+                                        best_neighbor_exposed_edge,
+                                        best_candidate_edge,
+                                    )
                     
                     # Reset to next rotation
                 
@@ -478,13 +516,23 @@ class AlternativeSolver(threading.Thread):
             
             # If we found a valid placement, use it
             if best_placement:
-                piece, rotation, coord, score = best_placement
+                piece, rotation, coord, score, neighbor_piece, neighbor_edge, candidate_edge = best_placement
                 
                 # Apply the rotation that was found to be best
                 for _ in range(rotation):
                     piece.rotate_edges(1)
-                
-                self.place_piece_at_grid(piece, coord, rotation)
+
+                # Align the placed piece to its chosen neighbor and transform pixels
+                stick_pieces(
+                    neighbor_edge,
+                    piece,
+                    candidate_edge,
+                    final_stick=True,
+                    centroid_bloc=neighbor_piece.get_center(),
+                    centroid_cand=piece.get_center(),
+                )
+
+                self.place_piece_at_grid(piece, coord, 0)
                 
                 # Mark edges as connected
                 for neighbor_coord, neighbor_piece, direction_from_neighbor in self.find_neighbors_at_coord(coord):
@@ -672,56 +720,29 @@ class AlternativeSolver(threading.Thread):
             return
         
         try:
-            # Estimate piece size from a sample piece
-            sample_piece = None
-            for piece in self.puzzle.pieces_:
-                if piece.pixels:
-                    sample_piece = piece
-                    break
-            
-            if not sample_piece:
-                print("[AlternativeSolver] No piece with pixels found")
+            # Compute the world-space bounding box of all placed piece pixels.
+            all_pixels = [pixel for piece in self.puzzle.pieces_ for pixel in piece.pixels]
+            if not all_pixels:
+                print("[AlternativeSolver] No piece pixels available")
                 return
             
-            px_list = list(sample_piece.pixels.keys())
-            px_x = [p[0] for p in px_list]
-            px_y = [p[1] for p in px_list]
-            piece_height = max(px_x) - min(px_x) + 1
-            piece_width = max(px_y) - min(px_y) + 1
+            min_x = min(p[0] for p in all_pixels)
+            min_y = min(p[1] for p in all_pixels)
+            max_x = max(p[0] for p in all_pixels)
+            max_y = max(p[1] for p in all_pixels)
             
-            # Calculate canvas size
-            canvas_height = (self.max_x - self.min_x + 1) * piece_height
-            canvas_width = (self.max_y - self.min_y + 1) * piece_width
+            canvas_height = int(max_x - min_x + 1)
+            canvas_width = int(max_y - min_y + 1)
             
-            # Create white canvas
-            canvas = np.ones((int(canvas_height), int(canvas_width), 3), dtype=np.uint8) * 255
+            canvas = np.ones((canvas_height, canvas_width, 3), dtype=np.uint8) * 255
             
-            # Draw each piece at its grid position
-            for coord, piece_idx in self.grid.items():
-                piece = self.puzzle.pieces_[piece_idx]
-                grid_x, grid_y = coord
-                
-                # Canvas offset for this grid position
-                canvas_x_offset = (grid_x - self.min_x) * piece_height
-                canvas_y_offset = (grid_y - self.min_y) * piece_width
-                
-                # Get piece pixel bounds
-                if not piece.pixels:
-                    continue
-                
-                piece_px_list = list(piece.pixels.keys())
-                piece_min_x = int(min(p[0] for p in piece_px_list))
-                piece_min_y = int(min(p[1] for p in piece_px_list))
-                
-                # Draw piece pixels
+            for piece in self.puzzle.pieces_:
                 for (px, py), color in piece.pixels.items():
-                    canvas_x = canvas_x_offset + int(px) - piece_min_x
-                    canvas_y = canvas_y_offset + int(py) - piece_min_y
-                    
-                    if 0 <= canvas_x < int(canvas_height) and 0 <= canvas_y < int(canvas_width):
-                        canvas[int(canvas_x), int(canvas_y)] = color
+                    canvas_x = int(px) - min_x
+                    canvas_y = int(py) - min_y
+                    if 0 <= canvas_x < canvas_height and 0 <= canvas_y < canvas_width:
+                        canvas[canvas_x, canvas_y] = color
             
-            # Save
             out_dir = os.environ.get("ZOLVER_TEMP_DIR", ".")
             os.makedirs(out_dir, exist_ok=True)
             
