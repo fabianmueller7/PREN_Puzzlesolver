@@ -371,6 +371,9 @@ class Puzzle:
                 best_coord = []
                 for x in range(minX, maxX + 1):
                     for y in range(minY, maxY + 1):
+                        # Skip if coordinate is already occupied to prevent overlaps
+                        if any(equals_tuple((x, y), c) for c, _ in connected_direction):
+                            continue
                         neighbor = list(
                             filter(
                                 lambda e: is_neighbor(
@@ -435,6 +438,9 @@ class Puzzle:
             best_coord = []
             for x in range(minX, maxX + 1):
                 for y in range(minY, maxY + 1):
+                    # Skip if coordinate is already occupied to prevent overlaps
+                    if any(equals_tuple((x, y), c) for c, _ in connected_direction):
+                        continue
                     neighbor = list(
                         filter(
                             lambda e: is_neighbor((x, y), e[0], connected_direction),
@@ -520,10 +526,22 @@ class Puzzle:
                 for e2 in piece.edges_:
                     e2.backup_shape()
                 stick_pieces(e, piece, edge)
+                
+                # Berechne den Corner-Gap (Abstand der Eckpunkte nach dem Ausrichten)
+                # Ein hoher Gap deutet auf eine falsche Platzierung hin, selbst wenn die Nase passt.
+                gap_dist = np.linalg.norm(np.array(e.shape[-1]) - np.array(edge.shape[0]))
+
                 if self.green_:
-                    diff_e[edge] = real_edge_compute(edge, e)
+                    score = real_edge_compute(edge, e)
                 else:
-                    diff_e[edge] = generated_edge_compute(edge, e)
+                    score = generated_edge_compute(edge, e)
+                
+                # Bestrafung für große Lücken an den Ecken
+                # Wenn die Lücke > 15px ist, wird der Score massiv verschlechtert
+                if gap_dist > 15.0:
+                    score += gap_dist * 5.0
+                
+                diff_e[edge] = score
                 for e2 in piece.edges_:
                     e2.restore_backup_shape()
 
@@ -658,6 +676,7 @@ class Puzzle:
         # Output a summary per piece to identify the 'bad' ones
         self.log("\n>>> Quality Summary by Piece:")
         threshold = getattr(config, 'MATCH_THRESHOLD', 600.0)
+        max_allowed_gap = getattr(config, 'MAX_CORNER_GAP', 30.0)
         suspicious = []
         for p_id, scores in piece_quality.items():
             if not scores: continue
@@ -666,7 +685,7 @@ class Puzzle:
             avg_corner = sum(piece_corner_err[p_id]) / len(piece_corner_err[p_id]) if piece_corner_err[p_id] else 0.0
             
             # Ein Teil ist verdächtig, wenn der Score zu hoch ODER die Ecken zu weit auseinander sind
-            is_bad = max_score >= threshold or avg_corner > 30.0
+            is_bad = max_score >= threshold or avg_corner > max_allowed_gap
             status = "OK" if not is_bad else "BAD MATCH ❌"
             
             if status != "OK": suspicious.append(p_id)
@@ -717,11 +736,19 @@ class Puzzle:
             if not suspicious_ids:
                 break
             
-            # Sortiere nach dem höchsten Corner-Error und nimm die Top 2
+            # Sortiere nach dem höchsten Corner-Error
             sorted_suspicious = sorted(suspicious_ids, key=lambda x: errors[x]['avg_corner_err'], reverse=True)
-            to_fix_ids = sorted_suspicious[:2]
             
-            self.log(f"\n[LOCAL FIX] Attempt {attempt+1}: Targeting pieces {to_fix_ids} due to high errors.")
+            # Wenn Piece 0 (Startstück) betroffen ist, brechen wir den ganzen Solve-Versuch ab,
+            # da das Fundament falsch ist. solve_puzzle wird dann die nächste Rotation/Ecke probieren.
+            if 0 in sorted_suspicious and errors[0]['avg_corner_err'] > 20.0:
+                self.log("[LOCAL FIX] Start piece (0) is suspicious. Aborting this solve attempt to try next start config.")
+                return
+
+            # Ansonsten versuchen wir die bis zu 3 schlechtesten Teile (außer Startstück) zu fixen
+            to_fix_ids = [pid for pid in sorted_suspicious if pid != 0][:3]
+            
+            self.log(f"\n[LOCAL FIX] Attempt {attempt+1}: Targeting pieces {to_fix_ids} for re-placement.")
             
             # Backup des aktuellen Zustands für Revert
             backup_pieces_state = [p.get_current_state() for p in self.pieces_]
@@ -766,23 +793,29 @@ class Puzzle:
     def translate_puzzle(self):
         """Translate all pieces to the top left corner to be sure the puzzle is in the image"""
 
-        minX = sys.maxsize
-        minY = sys.maxsize
+        # Find minimum y (min_y) and minimum x (min_x) across all edges.
+        # pixel[0] is y, pixel[1] is x.
+        min_y = sys.maxsize
+        min_x = sys.maxsize
         for p in self.pieces_:
             for e in p.edges_:
                 for pixel in e.shape:
-                    if pixel[0] < minX:
-                        minX = pixel[0]
-                    if pixel[1] < minY:
-                        minY = pixel[1]
+                    if pixel[0] < min_y:
+                        min_y = pixel[0]
+                    if pixel[1] < min_x:
+                        min_x = pixel[1]
+
+        # Use integer translation to avoid float keys in PuzzlePiece.pixels
+        ty = int(math.floor(min_y))
+        tx = int(math.floor(min_x))
 
         for p in self.pieces_:
             for e in p.edges_:
                 for ip, _ in enumerate(e.shape):
-                    e.shape[ip] += (-minX, -minY)
+                    e.shape[ip] += (-ty, -tx)
 
         for p in self.pieces_:
-            p.translate(minX, minY)
+            p.translate(-tx, -ty)
 
     def export_pieces(
         self,
@@ -800,8 +833,6 @@ class Puzzle:
         :param path_colored: Path used to export the colored image
         :return: the best edge found in the bloc
         """
-        if not (self.viewer and display):
-            return
 
         minX, minY, maxX, maxY = self.get_bbox()
         colored_img = np.zeros((maxX - minX, maxY - minY, 3), dtype=np.uint8)

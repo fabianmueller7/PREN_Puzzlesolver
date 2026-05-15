@@ -330,7 +330,8 @@ def _reclassify_undefined(t, pos_in, neg_in, segment_angles=None):
     # Threshold: max abs amplitude below which a single-polarity segment is BORDER.
     # The signal is L2-normalized over the whole contour, so a flat/rounded border
     # contributes very little energy while a real connector has significant amplitude.
-    FLAT_BORDER_THRESHOLD = 0.05
+    # Default fallback, will be overwritten by config if present
+    FLAT_BORDER_THRESHOLD = getattr(config, 'FLAT_BORDER_THRESHOLD', 0.05)
 
     if t != TypeEdge.UNDEFINED:
         return t
@@ -340,19 +341,15 @@ def _reclassify_undefined(t, pos_in, neg_in, segment_angles=None):
     if len(peaks_inside(neg_in, pos_in)) >= 1:
         return TypeEdge.HEAD
     # Only one polarity present – check amplitude before committing to HEAD/HOLE.
-    # A slightly curved border edge can produce a single spurious peak; if the
-    # signal energy in the segment is too low it is BORDER, not a real connector.
     if len(pos_in) > 0 and len(neg_in) == 0:
         if segment_angles is not None:
             amp = np.max(np.abs(segment_angles))
-            print(f"[reclassify] single-pos peak, max_amp={amp:.4f}, threshold={FLAT_BORDER_THRESHOLD}")
             if amp < FLAT_BORDER_THRESHOLD:
                 return TypeEdge.BORDER
         return TypeEdge.HEAD
     if len(neg_in) > 0 and len(pos_in) == 0:
         if segment_angles is not None:
             amp = np.max(np.abs(segment_angles))
-            print(f"[reclassify] single-neg peak, max_amp={amp:.4f}, threshold={FLAT_BORDER_THRESHOLD}")
             if amp < FLAT_BORDER_THRESHOLD:
                 return TypeEdge.BORDER
         return TypeEdge.HOLE

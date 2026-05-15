@@ -59,7 +59,7 @@ class PuzzlePiece:
         minX, minY, maxX, maxY = self.get_bbox()
         img_p = np.full((maxX - minX + 1, maxY - minY + 1, 3), -1)
         for (x, y), c in self.pixels.items():
-            img_p[x - minX, y - minY] = c
+            img_p[int(x) - minX, int(y) - minY] = c
         return img_p
 
     def number_of_border(self):
