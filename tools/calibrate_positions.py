@@ -26,10 +26,15 @@ try:
 
     for label, x, y in POSITIONS:
         print(f"-> {label}: X={x} Y={y}")
-        robot.go_to(x, y)
-        print(f"   Warte 10s ...")
-        robot.gripper_down()
+        robot.go_to(100, 100)
+        robot.vacuum_pump_on()
+        robot.gripper_on()
         time.sleep(10)
+
+        robot.go_to(x, y)
+
+        robot.gripper_down()
+        robot.gripper_off()
         robot.gripper_up()
 
         print(f"   Fertig.")
