@@ -44,6 +44,12 @@ def detect_a4_border(frame):
     rotated = cv2.warpAffine(frame, M, (frame.shape[1], frame.shape[0]),
                              flags=cv2.INTER_LINEAR)
 
+    import os
+    debug_dir = os.environ.get("ZOLVER_TEMP_DIR", "debug_output")
+    border_path = os.path.join(debug_dir, "capture_with_border.jpg")
+    cv2.imwrite(border_path, rotated)
+    print(f"[1/3] Rotated with border:     {border_path}  ({rotated.shape[1]}×{rotated.shape[0]} px)")
+
     h, w = rotated.shape[:2]
     x0 = int(w * 0.20)
     x1 = int(w * 0.80)
