@@ -161,9 +161,11 @@ def run_pipeline(green_screen: bool = False):
     _setup_debug_dir()
     robot = PicoInterface(port=ROBOT_PORT)
     try:
+        robot.led_on()
         image_path = take_picture()
         pieces     = solve_puzzle(image_path, green_screen=green_screen)
         move_pieces(robot, pieces)
+        robot.led_off()
     finally:
         robot.close()
 

@@ -12,9 +12,10 @@ def detect_a4_border(frame):
     import numpy as np
 
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-    # Orange sits at roughly Hue 4–25 in HSV (measured from real captures)
-    mask = cv2.inRange(hsv, (4, 80, 80), (25, 255, 255))
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (15, 15))
+    # Orange: hue 0–35, low S/V thresholds so dim or unevenly lit sides are caught.
+    # Large closing kernel bridges gaps where lighting washes out the orange.
+    mask = cv2.inRange(hsv, (0, 30, 30), (35, 255, 255))
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (30, 30))
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
 
     contours, hierarchy = cv2.findContours(mask, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE)
@@ -50,11 +51,16 @@ def detect_a4_border(frame):
     cv2.imwrite(border_path, rotated)
     print(f"[1/3] Rotated with border:     {border_path}  ({rotated.shape[1]}×{rotated.shape[0]} px)")
 
-    h, w = rotated.shape[:2]
-    x0 = int(w * 0.20)
-    x1 = int(w * 0.80)
-    y0 = int(h * 0.25)
-    y1 = int(h * 0.95)
+    # After angle adjustment, the inner rect has width=max(rw,rh), height=min(rw,rh)
+    iw = max(rw, rh)
+    ih = min(rw, rh)
+    cx, cy = center[0], center[1]
+
+    # Apply crop percentages relative to the detected inner rectangle
+    x0 = max(int(cx - iw / 2 + iw * 0.20), 0)
+    x1 = min(int(cx + iw / 2 - iw * 0.20), rotated.shape[1])
+    y0 = max(int(cy - ih / 2 + ih * 0.25), 0)
+    y1 = min(int(cy + ih / 2 - ih * 0.05), rotated.shape[0])
 
     return cv2.resize(rotated[y0:y1, x0:x1], (BORDER_OUTPUT_W, BORDER_OUTPUT_H),
                       interpolation=cv2.INTER_AREA)
