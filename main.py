@@ -122,6 +122,7 @@ def move_pieces(robot, pieces: list):
 
     robot.motors_enable()
     robot.home_z()
+    robot.gripper_up()
     robot.home_x()
     robot.home_y()
     robot.reset_rotation()
