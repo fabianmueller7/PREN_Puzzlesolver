@@ -4,7 +4,7 @@ BORDER_DETECTION = True
 BORDER_OUTPUT_W = 906
 BORDER_OUTPUT_H = 648
 
-INSET = 10  # px trimmed on each side to remove residual border slither
+INSET = 6  # px trimmed on each side to remove residual border slither
 
 
 def detect_a4_border(frame):
@@ -18,7 +18,7 @@ def detect_a4_border(frame):
     mask = cv2.inRange(hsv, (0, 0, 160), (180, 60, 255))
     # Erode first to eliminate thin bright regions outside the playfield,
     # then close to fill holes left by dark puzzle pieces.
-    erode_k = cv2.getStructuringElement(cv2.MORPH_RECT, (20, 20))
+    erode_k = cv2.getStructuringElement(cv2.MORPH_RECT, (15, 15))
     close_k = cv2.getStructuringElement(cv2.MORPH_RECT, (80, 80))
     mask = cv2.erode(mask, erode_k)
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, close_k)
