@@ -12,8 +12,8 @@ def detect_a4_border(frame):
     import numpy as np
 
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-    # Orange sits at roughly Hue 10–25 in HSV
-    mask = cv2.inRange(hsv, (10, 100, 100), (25, 255, 255))
+    # Orange sits at roughly Hue 4–25 in HSV (measured from real captures)
+    mask = cv2.inRange(hsv, (4, 80, 80), (25, 255, 255))
     kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (15, 15))
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
 
