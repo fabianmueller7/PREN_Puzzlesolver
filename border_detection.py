@@ -1,66 +1,55 @@
-# Toggle: set to False to skip orange-border detection and use the static crop only.
+# Toggle: set to False to skip playfield detection and use the static crop only.
 BORDER_DETECTION = True
 
 BORDER_OUTPUT_W = 906
 BORDER_OUTPUT_H = 648
 
+INSET = 10  # px trimmed on each side to remove residual border slither
+
 
 def detect_a4_border(frame):
-    """Detect the orange A4 frame, correct rotation with an affine rotate, and crop inside.
-    Returns None when no clear orange rectangle is found."""
+    """Detect the white playfield background, correct rotation, and crop to it.
+    Returns None when no clear white rectangle is found."""
     import cv2
-    import numpy as np
+    import os
 
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-    # Orange: hue 0–35, low S/V thresholds so dim or unevenly lit sides are caught.
-    # Large closing kernel bridges gaps where lighting washes out the orange.
-    mask = cv2.inRange(hsv, (0, 30, 30), (35, 255, 255))
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (30, 30))
-    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+    # White = low saturation, high brightness
+    mask = cv2.inRange(hsv, (0, 0, 160), (180, 60, 255))
+    # Erode first to eliminate thin bright regions outside the playfield,
+    # then close to fill holes left by dark puzzle pieces.
+    erode_k = cv2.getStructuringElement(cv2.MORPH_RECT, (20, 20))
+    close_k = cv2.getStructuringElement(cv2.MORPH_RECT, (80, 80))
+    mask = cv2.erode(mask, erode_k)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, close_k)
 
-    contours, hierarchy = cv2.findContours(mask, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE)
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     if not contours:
         return None
 
-    # Find the largest outer contour (the orange ring itself)
-    outer = [(i, cv2.contourArea(c)) for i, c in enumerate(contours)
-             if hierarchy[0][i][3] == -1]
-    if not outer:
-        return None
-    ring_idx, ring_area = max(outer, key=lambda x: x[1])
-    if ring_area < 10_000:
+    largest = max(contours, key=cv2.contourArea)
+    if cv2.contourArea(largest) < 50_000:
         return None
 
-    # Prefer the inner hole so the red border is excluded from the output
-    child_idx = hierarchy[0][ring_idx][2]
-    inner_cnt = contours[child_idx] if child_idx != -1 else contours[ring_idx]
-
-    center, (rw, rh), angle = cv2.minAreaRect(inner_cnt)
-    # minAreaRect angle is in [-90, 0); ensure the long side is horizontal
+    center, (rw, rh), angle = cv2.minAreaRect(largest)
     if rw < rh:
         angle += 90
 
-    # Affine rotation — rigid transform, no shear/scale distortion
     M = cv2.getRotationMatrix2D(center, angle, 1.0)
     rotated = cv2.warpAffine(frame, M, (frame.shape[1], frame.shape[0]),
                              flags=cv2.INTER_LINEAR)
 
-    import os
     debug_dir = os.environ.get("ZOLVER_TEMP_DIR", "debug_output")
     border_path = os.path.join(debug_dir, "capture_with_border.jpg")
     cv2.imwrite(border_path, rotated)
-    print(f"[1/3] Rotated with border:     {border_path}  ({rotated.shape[1]}×{rotated.shape[0]} px)")
+    print(f"[1/3] Rotated (pre-crop):      {border_path}  ({rotated.shape[1]}×{rotated.shape[0]} px)")
 
-    # After angle adjustment, the inner rect has width=max(rw,rh), height=min(rw,rh)
-    iw = max(rw, rh)
-    ih = min(rw, rh)
+    iw, ih = max(rw, rh), min(rw, rh)
     cx, cy = center[0], center[1]
-
-    # Apply crop percentages relative to the detected inner rectangle
-    x0 = max(int(cx - iw / 2 + iw * 0.20), 0)
-    x1 = min(int(cx + iw / 2 - iw * 0.20), rotated.shape[1])
-    y0 = max(int(cy - ih / 2 + ih * 0.25), 0)
-    y1 = min(int(cy + ih / 2 - ih * 0.05), rotated.shape[0])
+    x0 = max(int(cx - iw / 2) + INSET, 0)
+    x1 = min(int(cx + iw / 2) - INSET, rotated.shape[1])
+    y0 = max(int(cy - ih / 2) + INSET, 0)
+    y1 = min(int(cy + ih / 2) - INSET, rotated.shape[0])
 
     return cv2.resize(rotated[y0:y1, x0:x1], (BORDER_OUTPUT_W, BORDER_OUTPUT_H),
                       interpolation=cv2.INTER_AREA)
