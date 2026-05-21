@@ -23,7 +23,7 @@ CROP_Y =  203  # top edge    (P1 y)
 CROP_W = 1050  # width       (+30 % of 906)
 CROP_H =  880  # height      (+30 % of 648)
 
-from border_detection import BORDER_DETECTION, BORDER_OUTPUT_W, BORDER_OUTPUT_H, detect_a4_border
+from gamefield_detection import BORDER_DETECTION, BORDER_OUTPUT_W, BORDER_OUTPUT_H, detect_a4_border
 
 
 # ---------------------------------------------------------------------------
