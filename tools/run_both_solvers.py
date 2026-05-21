@@ -28,8 +28,8 @@ REPO_ROOT = os.path.dirname(THIS_DIR)
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
-from Puzzle.alternative_solver import AlternativeSolver
-from Puzzle.Puzzle import Puzzle
+from solver.Puzzle.alternative_solver import AlternativeSolver
+from solver.Puzzle.Puzzle import Puzzle
 
 
 def main():

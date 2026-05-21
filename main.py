@@ -1,32 +1,201 @@
-"""
-Hauptprogramm (Einstiegspunkt) des Puzzlesolver-GUI.
-
-Aufgaben:
-- Erstellt ein temporäres Arbeitsverzeichnis und macht es über
-  die Umgebungsvariable SOLVER_TEMP_DIR für das Programm verfügbar.
-- Sorgt dafür, dass dieses Verzeichnis beim Beenden automatisch gelöscht wird.
-- Startet die PyQt5-Anwendung und zeigt das Hauptfenster (Viewer) an.
-"""
-
-
+import argparse
 import glob
-import os           # Für den Zugriff auf Umgebungsvariablen
-import sys          # Für Kommandozeilenargumente, die an Qt weitergegeben werden
+import json
+import os
+import sys
 
-from PyQt5.QtWidgets import QApplication    # Hauptklasse der Qt-GUI-Anwendung
-from GUI.Viewer import Viewer               # Import des Hauptfensters (eigene Klasse)
+# ---------------------------------------------------------------------------
+# Robot / pipeline configuration
+# ---------------------------------------------------------------------------
+ROBOT_PORT    = "/dev/ttyACM0"   # serial port of the Pico
+CAMERA_RESOLUTION = (1920, 1080)  # capture resolution
 
 
-if __name__ == "__main__":
+CAPTURE_PATH        = "debug_output/capture.jpg"
+CAPTURE_RAW_PATH    = "debug_output/capture_raw.jpg"
+CAPTURE_COARSE_PATH = "debug_output/capture_coarse.jpg"
+
+# Crop region within the captured frame (pixels).
+# Set to None to use the full frame.
+# Calibrate once by running: python main.py --show-crop
+CROP_X =  367  # left edge   (P2 x)
+CROP_Y =  203  # top edge    (P1 y)
+CROP_W = 1050  # width       (+30 % of 906)
+CROP_H =  880  # height      (+30 % of 648)
+
+from border_detection import BORDER_DETECTION, BORDER_OUTPUT_W, BORDER_OUTPUT_H, detect_a4_border
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _setup_debug_dir():
     debug_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "debug_output")
     os.makedirs(debug_dir, exist_ok=True)
     for f in glob.glob(os.path.join(debug_dir, "*")):
         os.remove(f)
     os.environ["ZOLVER_TEMP_DIR"] = debug_dir
     print(f"Debug output directory: {debug_dir}")
+    return debug_dir
 
-    # Display GUI and exit
-    app = QApplication(sys.argv)
-    imageViewer = Viewer()
-    imageViewer.show()
-    sys.exit(app.exec_())
+
+# ---------------------------------------------------------------------------
+# Pipeline step 1 — capture
+# ---------------------------------------------------------------------------
+
+def _crop(frame):
+    """Apply the configured crop to *frame*. Returns the frame unchanged if no crop is set."""
+    x = CROP_X or 0
+    y = CROP_Y or 0
+    h, w = frame.shape[:2]
+    x2 = x + CROP_W if CROP_W else w
+    y2 = y + CROP_H if CROP_H else h
+    return frame[y:y2, x:x2]
+
+
+
+def take_picture(save_path: str = CAPTURE_PATH) -> str:
+    """Capture one frame from the Pi camera, save raw and cropped versions."""
+    import cv2
+    from picamera2 import Picamera2
+
+    cam = Picamera2()
+    cam.configure(cam.create_still_configuration(main={"size": CAMERA_RESOLUTION}))
+    cam.start()
+    frame = cam.capture_array()   # numpy array, RGB
+    cam.stop()
+    cam.close()
+
+    frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+    cv2.imwrite(CAPTURE_RAW_PATH, frame)
+    print(f"[1/3] Raw capture saved:    {CAPTURE_RAW_PATH}  ({frame.shape[1]}×{frame.shape[0]} px)")
+    coarse = _crop(frame)
+    cv2.imwrite(CAPTURE_COARSE_PATH, coarse)
+    print(f"[1/3] Coarse crop saved:       {CAPTURE_COARSE_PATH}  ({coarse.shape[1]}×{coarse.shape[0]} px)")
+    if BORDER_DETECTION:
+        warped = detect_a4_border(coarse)
+        if warped is not None:
+            cv2.imwrite(save_path, warped)
+            print(f"[1/3] Border-detected capture: {save_path}  ({warped.shape[1]}×{warped.shape[0]} px)")
+            return save_path
+        print("[WARN] Red border not detected — falling back to static crop")
+    cv2.imwrite(save_path, coarse)
+    print(f"[1/3] Cropped capture saved:   {save_path}  ({coarse.shape[1]}×{coarse.shape[0]} px)")
+    return save_path
+
+
+# ---------------------------------------------------------------------------
+# Pipeline step 2 — solve
+# ---------------------------------------------------------------------------
+
+def solve_puzzle(image_path: str, green_screen: bool = False) -> list:
+    """
+    Run the solver on *image_path*.
+    Returns the list of piece records from piece_centers.json, e.g.:
+      [{"piece_index": 0,
+        "grid_coord": [col, row],
+        "start_center_robot_mm": [x, y],
+        "end_center": [px, py]}, ...]
+    """
+    from solver.Puzzle.Puzzle import Puzzle
+
+    puzzle = Puzzle(image_path, green_screen=green_screen)
+    puzzle.solve_puzzle()
+
+    centers_path = os.path.join(os.environ["ZOLVER_TEMP_DIR"], "piece_centers.json")
+    with open(centers_path) as f:
+        pieces = json.load(f)
+    print(f"[2/3] Solver done — {len(pieces)} pieces detected")
+    return pieces
+
+
+# ---------------------------------------------------------------------------
+# Pipeline step 3 — move
+# ---------------------------------------------------------------------------
+
+def move_pieces(robot, pieces: list):
+    """
+    For each piece: pick up, rotate to solved orientation, put back down in place.
+    """
+    print("[3/3] Starting piece movements")
+
+    robot.motors_enable()
+    robot.home_z()
+    robot.gripper_up()
+    robot.home_x()
+    robot.home_y()
+    robot.reset_rotation()
+    robot.gripper_up()
+
+    for piece in pieces:
+        idx   = piece["piece_index"]
+        x, y  = piece["start_center_robot_mm"]
+        angle = piece["rotation_deg"]
+
+        print(f"  piece {idx}: rotate {angle}° in place at ({x}, {y}) mm")
+
+        robot.go_to(x, y)
+        robot.gripper_down()
+        robot.vacuum_pump_on()
+        robot.gripper_on()
+        robot.gripper_up()
+
+        robot.gripper_rotate(angle)
+
+        robot.gripper_down()
+        robot.gripper_off()
+        robot.vacuum_pump_off()
+        robot.gripper_up()
+
+    robot.motors_disable()
+    print("[3/3] Done")
+
+
+# ---------------------------------------------------------------------------
+# Full pipeline
+# ---------------------------------------------------------------------------
+
+def run_pipeline(green_screen: bool = False):
+    """End-to-end run: capture → solve → move."""
+    from robot.pico_interface import PicoInterface
+
+    _setup_debug_dir()
+    robot = PicoInterface(port=ROBOT_PORT)
+    try:
+        robot.led_on()
+        image_path = take_picture()
+        pieces     = solve_puzzle(image_path, green_screen=green_screen)
+        move_pieces(robot, pieces)
+        robot.led_off()
+    finally:
+        robot.close()
+
+
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+
+def main():
+    parser = argparse.ArgumentParser(description="PREN Puzzlesolver")
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--gui",  action="store_true", help="open GUI viewer")
+    mode.add_argument("--prod", action="store_true", help="production pipeline: capture → solve → move")
+    parser.add_argument("--green-screen", action="store_true", help="enable green background removal")
+    args = parser.parse_args()
+
+    if args.gui:
+        _setup_debug_dir()
+        from PyQt5.QtWidgets import QApplication
+        from solver.GUI.Viewer import Viewer
+        app = QApplication(sys.argv)
+        viewer = Viewer()
+        viewer.show()
+        sys.exit(app.exec_())
+
+    else:  # --prod
+        run_pipeline(green_screen=args.green_screen)
+
+
+if __name__ == "__main__":
+    main()
