@@ -61,7 +61,7 @@ class Viewer(QMainWindow):
             self.solveAct.setEnabled(True)
             self.solveGreenAct.setEnabled(True)
 
-            from border_detection import BORDER_DETECTION, detect_a4_border
+            from gamefield_detection import BORDER_DETECTION, detect_a4_border
             import cv2, os
             if BORDER_DETECTION:
                 frame = cv2.imread(fileName)
