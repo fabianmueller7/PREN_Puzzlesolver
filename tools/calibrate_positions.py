@@ -10,10 +10,10 @@ from robot.pico_interface import PicoInterface
 PORT = "/dev/ttyACM0"
 
 POSITIONS = [
-    ("Oben rechts",  50,  250),
-    ("Unten Mitte", 150,  350),
-    ("Oben links",  260,  250),
-    ("Mitte oben",  147,  245),
+    ("Oben rechts",  55, 250),
+    ("Mitte oben",  256, 222),
+    ("Mitte unten", 256, 323),
+    ("Links",       260, 300),
 ]
 
 robot = PicoInterface(port=PORT)
