@@ -171,7 +171,7 @@ def move_pieces(robot, pieces: list):
         robot.vacuum_pump_on()
         robot.gripper_on()
         robot.gripper_up()
-
+        robot.reset_rotation()
         robot.gripper_rotate(angle)
 
         robot.gripper_down()
