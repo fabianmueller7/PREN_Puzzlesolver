@@ -160,12 +160,14 @@ def move_pieces(robot, pieces: list):
         x, y  = piece["start_center_robot_mm"]
         angle = piece["rotation_deg"]
 
-        angle = 360  # TEST: rotate all pieces 360°
+        angle = 180  # TEST: rotate all pieces 360°
 
         print(f"  piece {idx}: rotate {angle}° in place at ({x}, {y}) mm")
 
         robot.go_to(x, y)
         robot.gripper_down()
+        robot.gripper_up()
+         robot.gripper_down()
         robot.gripper_up()
         robot.gripper_down()
         robot.vacuum_pump_on()
