@@ -38,17 +38,21 @@ def detect_aruco_border(frame):
     import numpy as np
     import os
 
+    debug_dir = os.environ.get("ZOLVER_TEMP_DIR", "debug_output")
+
+    # CLAHE on the luminance channel to recover contrast lost by bottom-lit LED
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+    enhanced = clahe.apply(gray)
+    detect_frame = cv2.cvtColor(enhanced, cv2.COLOR_GRAY2BGR)
+    cv2.imwrite(os.path.join(debug_dir, "capture_aruco_input.jpg"), detect_frame)
+
     dictionary = aruco.getPredefinedDictionary(aruco.DICT_4X4_50)
     params = aruco.DetectorParameters()
     params.detectInvertedMarker = True
     detector = aruco.ArucoDetector(dictionary, params)
 
-    corners, ids, rejected = detector.detectMarkers(frame)
-
-    debug_dir = os.environ.get("ZOLVER_TEMP_DIR", "debug_output")
-
-    # Always save the input frame so we can inspect what the detector sees
-    cv2.imwrite(os.path.join(debug_dir, "capture_aruco_input.jpg"), frame)
+    corners, ids, rejected = detector.detectMarkers(detect_frame)
 
     found_ids = ids.flatten().tolist() if ids is not None else []
     print(f"[ArUco] detected {len(found_ids)} marker(s): {found_ids}  "
