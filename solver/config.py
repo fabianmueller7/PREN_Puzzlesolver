@@ -21,7 +21,7 @@ EDGE_OFFSET = 0  # pixels (6 pixels ≈ 1mm) — shifts each edge outward to sho
 #   robot_y = CAL_M[1][0]*px + CAL_M[1][1]*py + CAL_M[1][2]
 CAL_M = [
     [-0.329558, -0.002705, 303.875],
-    [-0.001105,  0.321467, 175.479],
+    [-0.001105,  0.321467, 172.979],
 ]
 
 # Fine-tune knobs: scale positions outward from CAL_CENTRE after the affine transform.
