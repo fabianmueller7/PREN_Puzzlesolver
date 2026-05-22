@@ -73,7 +73,10 @@ class Puzzle:
             return
 
         if config.DEBUG_PIECE_CENTERS == 1:
-            _start_centers = {id(p): self._piece_centroid(p) for p in self.pieces_}
+            _start_centers = {
+                id(p): p.img_centroid if p.img_centroid is not None else self._piece_centroid(p)
+                for p in self.pieces_
+            }
 
         connected_pieces = []
         border_pieces = self.border_pieces.copy()

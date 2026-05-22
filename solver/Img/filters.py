@@ -464,7 +464,11 @@ def export_contours_without_colormatching(
                  connected=types_edges[i] == TypeEdge.BORDER)
             for i in range(4)
         ]
-        puzzle_pieces.append(PuzzlePiece(edges))
+        piece = PuzzlePiece(edges)
+        M = cv2.moments(cnt)
+        if M['m00'] != 0:
+            piece.img_centroid = (M['m10'] / M['m00'], M['m01'] / M['m00'])  # (col, row)
+        puzzle_pieces.append(piece)
 
         if export_img:
             mask_border = np.zeros_like(img_bw)

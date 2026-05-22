@@ -18,6 +18,7 @@ class PuzzlePiece:
         self.type = TypePiece(self.nBorders_)
         self.is_border = self.number_of_border() > 0
         self.rotation_steps = 0  # cumulative 90° CW steps applied during solving
+        self.img_centroid = None  # (col, row) from cv2.moments on the filled contour
 
     def get_bbox(self):
         # e.shape stores (col, row) pairs; returns (minX=min_row, minY=min_col, maxX=max_row, maxY=max_col)
