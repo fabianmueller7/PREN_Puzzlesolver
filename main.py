@@ -18,10 +18,10 @@ CAPTURE_COARSE_PATH = "debug_output/capture_coarse.jpg"
 # Crop region within the captured frame (pixels).
 # Set to None to use the full frame.
 # Calibrate once by running: python main.py --show-crop
-CROP_X =  367  # left edge   (P2 x)
-CROP_Y =  203  # top edge    (P1 y)
-CROP_W = 1050  # width       (+30 % of 906)
-CROP_H =  880  # height      (+30 % of 648)
+CROP_X =  262  # left edge   (P2 x)
+CROP_Y =  115  # top edge    (P1 y)
+CROP_W = 1260  # width       (+20 % from previous 1050)
+CROP_H = 1056  # height      (+20 % from previous 880)
 
 from gamefield_detection import BORDER_DETECTION, BORDER_OUTPUT_W, BORDER_OUTPUT_H, detect_a4_border
 
