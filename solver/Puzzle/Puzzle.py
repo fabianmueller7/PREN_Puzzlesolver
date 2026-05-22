@@ -444,7 +444,9 @@ class Puzzle:
         display=True,
         display_border=False,
     ):
-        if not (self.viewer and display):
+        show_in_viewer = bool(self.viewer and display)
+        save_to_file   = config.DEBUG_FILE_OUTPUT == 1
+        if not show_in_viewer and not save_to_file:
             return
 
         # e.shape stores (col, row) — col maps to the Y axis, row to the X axis.
