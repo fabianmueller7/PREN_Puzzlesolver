@@ -8,21 +8,25 @@ EDGE_OFFSET = 0  # pixels (6 pixels ≈ 1mm) — shifts each edge outward to sho
 # Affine calibration: maps warped-image pixel (px, py) → robot mm (rx, ry).
 # Both systems: (0,0) = top-left, X increases right, Y increases down.
 # Output image: 906×648 px (ArUco warp, playing field fills the image exactly).
-# Least-squares fit from all 4 measured playing-field corners (residual ±0.9 mm):
-#   Oben rechts  px=(905,   0) → robot=(  6.5, 176)
-#   Oben links   px=(  0,   0) → robot=(303.0, 175)
-#   Unten links  px=(  0, 647) → robot=(303.0, 386)
-#   Unten rechts px=(905, 647) → robot=(  3.0, 383)
+# Least-squares fit from 4 corners + 2 internal Y references (max residual ±1.8 mm):
+#   Corners:
+#     Oben rechts  px=(905,   0) → robot=(  6.5, 176)
+#     Oben links   px=(  0,   0) → robot=(303.0, 175)
+#     Unten links  px=(  0, 647) → robot=(303.0, 386)
+#     Unten rechts px=(905, 647) → robot=(  3.0, 383)
+#   Internal (Y axis only, X confirmed correct):
+#     py=183 → robot Y=235  (verified correct in field)
+#     py=455 → robot Y=320  (was reading 323, 3 mm too much)
 #   robot_x = CAL_M[0][0]*px + CAL_M[0][1]*py + CAL_M[0][2]
 #   robot_y = CAL_M[1][0]*px + CAL_M[1][1]*py + CAL_M[1][2]
 CAL_M = [
     [-0.329558, -0.002705, 303.875],
-    [-0.001105,  0.323029, 176.000],
+    [-0.001105,  0.321467, 175.479],
 ]
 
 # Fine-tune knobs: scale positions outward from CAL_CENTRE after the affine transform.
 # 1.0 = no correction. Increase to push outward; decrease to pull inward.
-# Tune in steps of 0.005 (~0.6 mm per 100 mm from centre).
+# Tune in steps of 0.005 (~0.5 mm per 100 mm from centre).
 CAL_CENTRE_X = 153.88  # robot mm
 CAL_CENTRE_Y = 280.00  # robot mm
 CAL_SCALE_X  = 1.0
