@@ -173,6 +173,7 @@ def move_pieces(robot, pieces: list):
         robot.gripper_up()
 
         # Rotate to target orientation while in the air
+        robot.reset_rotation()
         robot.gripper_rotate(angle)
 
         # Move to solved position and place
@@ -181,8 +182,6 @@ def move_pieces(robot, pieces: list):
         robot.gripper_off()
         robot.vacuum_pump_off()
         robot.gripper_up()
-
-        robot.reset_rotation()
 
     robot.motors_disable()
     print("[3/3] Done")
