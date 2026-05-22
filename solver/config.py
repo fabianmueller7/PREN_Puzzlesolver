@@ -9,25 +9,25 @@ EDGE_OFFSET = 0  # pixels (6 pixels ≈ 1mm) — shifts each edge outward to sho
 # Both systems: (0,0) = top-left, X increases right, Y increases down.
 # Robot X increases to the LEFT physically (home is on the right side),
 # hence the negative px coefficient in the rx row.
-# Output image: 906×648 px (ArUco warp).
-# Fit against 2 verified positions:
-#   Oben rechts  px=(756,213) → robot=( 55,250)
-#   Links        px=(136,364) → robot=(260,300)
-#   robot_x = CAL_M[0][0]*px + CAL_M[0][1]*py + CAL_M[0][2]
-#   robot_y = CAL_M[1][0]*px + CAL_M[1][1]*py + CAL_M[1][2]
+# Output image: 906×648 px (ArUco warp, playing field fills the image exactly).
+# Fit from physical playing-field corners:
+#   Oben rechts  px=(905,   0) → robot=(  6.5, 176)
+#   Unten links  px=(  0, 647) → robot=(303.0, 386)
+#   robot_x = CAL_M[0][0]*px + CAL_M[0][2]
+#   robot_y = CAL_M[1][1]*py + CAL_M[1][2]
 CAL_M = [
-    [-0.331930, -0.005277, 307.063358],
-    [ 0.001981,  0.339260, 176.240040],
+    [-0.327624, 0.0, 303.0],
+    [0.0, 0.324575, 176.0],
 ]
 
-# After the affine transform, positions are scaled outward from CAL_CENTRE
-# by CAL_SCALE_X / CAL_SCALE_Y independently.
+# Fine-tune knobs applied after the affine transform.
+# Positions are scaled outward from CAL_CENTRE by CAL_SCALE_X / CAL_SCALE_Y.
 # 1.0 = no correction.  Increase to push outward; decrease to pull inward.
 # Error grows with distance from centre → scale is the right knob to turn.
-CAL_CENTRE_X = 157.5   # robot mm  (midpoint of workspace in X)
-CAL_CENTRE_Y = 275.0   # robot mm  (midpoint of workspace in Y)
-CAL_SCALE_X  = 1.012   # ~1.25 mm outward per 100 mm from centre
-CAL_SCALE_Y  = 1.012
+CAL_CENTRE_X = 154.75  # robot mm  (midpoint between Oben-rechts and Unten-links in X)
+CAL_CENTRE_Y = 281.0   # robot mm  (midpoint between Oben-rechts and Unten-links in Y)
+CAL_SCALE_X  = 1.0
+CAL_SCALE_Y  = 1.0
 
 
 def pixel_to_robot(pixel_x, pixel_y):
