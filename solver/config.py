@@ -7,16 +7,16 @@ EDGE_OFFSET = 0  # pixels (6 pixels ≈ 1mm) — shifts each edge outward to sho
 
 # Affine calibration: maps cropped-image pixel (px, py) → robot mm (rx, ry).
 # Robot zero is top-right; X increases to the left, Y increases downward.
-# Output image: 906×648 px (white-background detection).
-# Recalibrated to fix systematic 1-3 mm towards-center offset.
-# Fit against 2 verified robot positions (cross-terms kept from prior fit):
-#   Oben rechts  px=(756,213) → robot=( 55,250)
-#   Links        px=(136,364) → robot=(260,300)
+# Output image: 906×648 px.
+# Fit against 3 measured positions:
+#   Oben Rechts  px=(450,482) → robot=( 73,252)
+#   Oben Links   px=(295,182) → robot=(212,234)
+#   Unten Mitte  px=(693,225) → robot=(150,335)
 #   robot_x = CAL_M[0][0]*px + CAL_M[0][1]*py + CAL_M[0][2]
 #   robot_y = CAL_M[1][0]*px + CAL_M[1][1]*py + CAL_M[1][2]
 CAL_M = [
-    [-0.331930, -0.005277, 307.063358],
-    [ 0.001981,  0.339260, 176.240040],
+    [-0.111971, -0.405482, 318.829],
+    [ 0.261906, -0.075318, 170.446],
 ]
 
 
