@@ -159,7 +159,7 @@ def move_pieces(robot, pieces: list):
         idx     = piece["piece_index"]
         x_s, y_s = piece["start_center_robot_mm"]
         x_e, y_e = piece["end_center_robot_mm"]
-        angle   = piece["rotation_deg"]
+        angle   = ((piece["rotation_deg"] + 180) % 360) - 180
 
         print(f"  piece {idx}: ({x_s},{y_s}) → ({x_e},{y_e})  rotate {angle}°")
 
