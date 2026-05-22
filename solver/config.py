@@ -10,7 +10,7 @@ EDGE_OFFSET = 0  # pixels (6 pixels ≈ 1mm) — shifts each edge outward to sho
 # Robot X increases to the LEFT physically (home is on the right side),
 # hence the negative px coefficient in the rx row.
 # Output image: 906×648 px (ArUco warp).
-# Calibrated against 2 verified positions (cross-terms reflect minor tilt):
+# Fit against 2 verified positions:
 #   Oben rechts  px=(756,213) → robot=( 55,250)
 #   Links        px=(136,364) → robot=(260,300)
 #   robot_x = CAL_M[0][0]*px + CAL_M[0][1]*py + CAL_M[0][2]
@@ -20,11 +20,22 @@ CAL_M = [
     [ 0.001981,  0.339260, 176.240040],
 ]
 
+# After the affine transform, positions are scaled outward from CAL_CENTRE
+# by CAL_SCALE_X / CAL_SCALE_Y independently.
+# 1.0 = no correction.  Increase to push outward; decrease to pull inward.
+# Error grows with distance from centre → scale is the right knob to turn.
+CAL_CENTRE_X = 157.5   # robot mm  (midpoint of workspace in X)
+CAL_CENTRE_Y = 275.0   # robot mm  (midpoint of workspace in Y)
+CAL_SCALE_X  = 1.012   # ~1.25 mm outward per 100 mm from centre
+CAL_SCALE_Y  = 1.012
+
 
 def pixel_to_robot(pixel_x, pixel_y):
     """Convert image pixel coordinates to robot mm coordinates."""
     rx = CAL_M[0][0] * pixel_x + CAL_M[0][1] * pixel_y + CAL_M[0][2]
     ry = CAL_M[1][0] * pixel_x + CAL_M[1][1] * pixel_y + CAL_M[1][2]
+    rx = CAL_CENTRE_X + (rx - CAL_CENTRE_X) * CAL_SCALE_X
+    ry = CAL_CENTRE_Y + (ry - CAL_CENTRE_Y) * CAL_SCALE_Y
     return round(rx), round(ry)
 
 # A4 landscape at 150 DPI
