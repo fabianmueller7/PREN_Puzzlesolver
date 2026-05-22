@@ -9,9 +9,7 @@ def _save_failed_debug(frame, corners, ids, rejected, debug_dir):
     dbg = frame.copy()
     if corners:
         aruco.drawDetectedMarkers(dbg, corners, ids)
-    # Draw rejected candidates in red so we can see near-misses
     for rj in rejected:
-        import numpy as np
         pts = rj[0].astype(int)
         for i in range(4):
             cv2.line(dbg, tuple(pts[i]), tuple(pts[(i + 1) % 4]), (0, 0, 200), 1)
@@ -20,25 +18,16 @@ def _save_failed_debug(frame, corners, ids, rejected, debug_dir):
     print(f"[ArUco] failed-detection debug saved to {debug_dir}/capture_aruco_failed.jpg")
 
 
-def detect_aruco_border(frame):
-    """Detect 4 ArUco corner markers on the LED frame and perspective-warp the playfield.
+def _compute_aruco_transform(frame, debug_dir):
+    """Detect 4 ArUco markers in *frame* and return the perspective transform.
 
-    Tags sit on the long-side rails of the frame, aligned with the paper corners.
-    Crop boundary: outer end lengthwise; lower edge for top marks, upper edge
-    for bottom marks — so the crop spans the inner facing edges of all 4 tags.
-      Tag 0 (TL) → corner[3] (bottom-left of tag)
-      Tag 1 (TR) → corner[2] (bottom-right of tag)
-      Tag 2 (BR) → corner[1] (top-right of tag)
-      Tag 3 (BL) → corner[0] (top-left of tag)
-
-    Returns the warped 906×648 image, or None if not all 4 tags are detected.
+    Returns (M, W, H) where M is the 3×3 warp matrix, or None on failure.
+    Saves debug images to *debug_dir*.
     """
     import cv2
     import cv2.aruco as aruco
     import numpy as np
     import os
-
-    debug_dir = os.environ.get("ZOLVER_TEMP_DIR", "debug_output")
 
     # CLAHE on the luminance channel to recover contrast lost by bottom-lit LED
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
@@ -59,18 +48,18 @@ def detect_aruco_border(frame):
           f"(rejected candidates: {len(rejected)})")
 
     if ids is None or len(ids) < 4:
-        _save_failed_debug(frame, corners, ids, rejected, debug_dir)
+        _save_failed_debug(detect_frame, corners, ids, rejected, debug_dir)
         return None
 
     ids_flat = ids.flatten().tolist()
     if not all(i in ids_flat for i in ARUCO_TAG_IDS):
         print(f"[ArUco] need IDs {ARUCO_TAG_IDS}, got {ids_flat}")
-        _save_failed_debug(frame, corners, ids, rejected, debug_dir)
+        _save_failed_debug(detect_frame, corners, ids, rejected, debug_dir)
         return None
 
     tag_map = {int(tid): corn[0] for tid, corn in zip(ids_flat, corners)}
 
-    # --- debug: draw tag edges on a copy of the original frame ---
+    # Save annotated debug image showing detected edges and reference corners
     debug_frame = frame.copy()
     aruco.drawDetectedMarkers(debug_frame, corners, ids)
     ref_corner_idx_debug = {0: 3, 1: 2, 2: 1, 3: 0}
@@ -87,13 +76,10 @@ def detect_aruco_border(frame):
             cv2.circle(debug_frame, (rx, ry), 8, color, -1)
             cv2.putText(debug_frame, f"c{ref_idx}", (rx + 10, ry),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
-    debug_aruco_path = os.path.join(debug_dir, "capture_aruco_debug.jpg")
-    cv2.imwrite(debug_aruco_path, debug_frame)
-    print(f"[1/3] ArUco debug image saved: {debug_aruco_path}")
+    cv2.imwrite(os.path.join(debug_dir, "capture_aruco_debug.jpg"), debug_frame)
+    print(f"[ArUco] debug image saved: {debug_dir}/capture_aruco_debug.jpg")
 
     # corner indices: each corners array is [TL, TR, BR, BL] of the tag.
-    # Lengthwise (horizontal): outer end of each mark.
-    # Heightwise (vertical): lower edge for top marks, upper edge for bottom marks.
     #   Tag 0 (TL) → corner[3] (bottom-left of tag)
     #   Tag 1 (TR) → corner[2] (bottom-right of tag)
     #   Tag 2 (BR) → corner[1] (top-right of tag)
@@ -110,16 +96,48 @@ def detect_aruco_border(frame):
         [0, BORDER_OUTPUT_H - 1],
     ])
 
-    src_pts[0] += [ OFFSET_LEFT,  OFFSET_TOP]
-    src_pts[1] += [-OFFSET_RIGHT, OFFSET_TOP]
+    src_pts[0] += [ OFFSET_LEFT,   OFFSET_TOP]
+    src_pts[1] += [-OFFSET_RIGHT,  OFFSET_TOP]
     src_pts[2] += [-OFFSET_RIGHT, -OFFSET_BOTTOM]
     src_pts[3] += [ OFFSET_LEFT,  -OFFSET_BOTTOM]
 
     M = cv2.getPerspectiveTransform(src_pts, dst_pts)
-    warped = cv2.warpPerspective(frame, M, (BORDER_OUTPUT_W, BORDER_OUTPUT_H))
+    return M, BORDER_OUTPUT_W, BORDER_OUTPUT_H
 
+
+def detect_aruco_border(frame):
+    """Detect ArUco markers and warp *frame*. Returns warped image or None."""
+    import cv2
+    import os
+
+    debug_dir = os.environ.get("ZOLVER_TEMP_DIR", "debug_output")
+    result = _compute_aruco_transform(frame, debug_dir)
+    if result is None:
+        return None
+    M, W, H = result
+    warped = cv2.warpPerspective(frame, M, (W, H))
     border_path = os.path.join(debug_dir, "capture_with_border.jpg")
     cv2.imwrite(border_path, warped)
-    print(f"[1/3] ArUco warp saved:        {border_path}  ({warped.shape[1]}×{warped.shape[0]} px)")
+    print(f"[ArUco] warp saved: {border_path}  ({W}×{H} px)")
+    return warped
 
+
+def detect_aruco_border_two_frame(detect_frame, warp_frame):
+    """Compute ArUco transform from *detect_frame*, apply it to *warp_frame*.
+
+    Use this when the LED is off for detection but on for the puzzle image.
+    Returns warped *warp_frame* or None if markers were not found.
+    """
+    import cv2
+    import os
+
+    debug_dir = os.environ.get("ZOLVER_TEMP_DIR", "debug_output")
+    result = _compute_aruco_transform(detect_frame, debug_dir)
+    if result is None:
+        return None
+    M, W, H = result
+    warped = cv2.warpPerspective(warp_frame, M, (W, H))
+    border_path = os.path.join(debug_dir, "capture_with_border.jpg")
+    cv2.imwrite(border_path, warped)
+    print(f"[ArUco] two-frame warp saved: {border_path}  ({W}×{H} px)")
     return warped
