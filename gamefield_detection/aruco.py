@@ -22,6 +22,7 @@ def detect_aruco_border(frame):
 
     dictionary = aruco.getPredefinedDictionary(aruco.DICT_4X4_50)
     params = aruco.DetectorParameters()
+    params.detectInvertedMarker = True
     detector = aruco.ArucoDetector(dictionary, params)
 
     corners, ids, _ = detector.detectMarkers(frame)
@@ -34,6 +35,29 @@ def detect_aruco_border(frame):
         return None
 
     tag_map = {int(tid): corn[0] for tid, corn in zip(ids_flat, corners)}
+
+    debug_dir = os.environ.get("ZOLVER_TEMP_DIR", "debug_output")
+
+    # --- debug: draw tag edges on a copy of the original frame ---
+    debug_frame = frame.copy()
+    aruco.drawDetectedMarkers(debug_frame, corners, ids)
+    ref_corner_idx_debug = {0: 3, 1: 2, 2: 1, 3: 0}
+    corner_colors = [(0, 255, 0), (0, 165, 255), (0, 0, 255), (255, 0, 0)]
+    for tid, corn in zip(ids_flat, corners):
+        pts = corn[0].astype(int)
+        cx, cy = pts.mean(axis=0).astype(int)
+        cv2.putText(debug_frame, f"ID {tid}", (cx - 20, cy - 12),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
+        if tid in ref_corner_idx_debug:
+            ref_idx = ref_corner_idx_debug[tid]
+            rx, ry = pts[ref_idx]
+            color = corner_colors[ARUCO_TAG_IDS.index(tid)]
+            cv2.circle(debug_frame, (rx, ry), 8, color, -1)
+            cv2.putText(debug_frame, f"c{ref_idx}", (rx + 10, ry),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+    debug_aruco_path = os.path.join(debug_dir, "capture_aruco_debug.jpg")
+    cv2.imwrite(debug_aruco_path, debug_frame)
+    print(f"[1/3] ArUco debug image saved: {debug_aruco_path}")
 
     # corner indices: each corners array is [TL, TR, BR, BL] of the tag.
     # Lengthwise (horizontal): outer end of each mark.
@@ -62,7 +86,6 @@ def detect_aruco_border(frame):
     M = cv2.getPerspectiveTransform(src_pts, dst_pts)
     warped = cv2.warpPerspective(frame, M, (BORDER_OUTPUT_W, BORDER_OUTPUT_H))
 
-    debug_dir = os.environ.get("ZOLVER_TEMP_DIR", "debug_output")
     border_path = os.path.join(debug_dir, "capture_with_border.jpg")
     cv2.imwrite(border_path, warped)
     print(f"[1/3] ArUco warp saved:        {border_path}  ({warped.shape[1]}×{warped.shape[0]} px)")

@@ -70,6 +70,9 @@ class Viewer(QMainWindow):
                     border_path = os.path.join("debug_output", "capture_border.jpg")
                     cv2.imwrite(border_path, warped)
                     self.addImage("Border detected", border_path, addMenu=True)
+                    aruco_debug_path = os.path.join("debug_output", "capture_aruco_debug.jpg")
+                    if os.path.exists(aruco_debug_path):
+                        self.addImage("ArUco tags (debug)", aruco_debug_path, display=False, addMenu=True)
                     self.addImage("Base image", fileName, display=False, addMenu=True)
                     return
                 print("[WARN] Red border not detected in opened image")

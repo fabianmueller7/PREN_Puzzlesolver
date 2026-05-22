@@ -38,12 +38,13 @@ cell_h = TAG_SIZE_PX + 2 * MARGIN + LABEL_H
 sheet_h = cell_h * 2
 sheet_w = cell_w * 2
 
-sheet = np.full((sheet_h, sheet_w), 255, dtype=np.uint8)
+sheet = np.zeros((sheet_h, sheet_w), dtype=np.uint8)  # black background for inverted tags
 
 for row_idx, row in enumerate(GRID):
     for col_idx, tag_id in enumerate(row):
         tag_img = np.zeros((TAG_SIZE_PX, TAG_SIZE_PX), dtype=np.uint8)
         aruco.generateImageMarker(dictionary, tag_id, TAG_SIZE_PX, tag_img)
+        tag_img = cv2.bitwise_not(tag_img)  # inverted: white modules on black background
 
         x0 = col_idx * cell_w + MARGIN
         y0 = row_idx * cell_h + MARGIN
@@ -53,7 +54,7 @@ for row_idx, row in enumerate(GRID):
         text_x = col_idx * cell_w + MARGIN
         text_y = row_idx * cell_h + MARGIN + TAG_SIZE_PX + LABEL_H - 8
         cv2.putText(sheet, label, (text_x, text_y),
-                    FONT, FONT_SCALE, 0, FONT_THICKNESS, cv2.LINE_AA)
+                    FONT, FONT_SCALE, 255, FONT_THICKNESS, cv2.LINE_AA)
 
 out_path = os.path.join(os.path.dirname(__file__), "..", "resources", "aruco_tags.png")
 out_path = os.path.normpath(out_path)
