@@ -61,28 +61,6 @@ class Viewer(QMainWindow):
             self.solveAct.setEnabled(True)
             self.solveGreenAct.setEnabled(True)
 
-            from gamefield_detection import BORDER_DETECTION, detect_a4_border
-            import cv2, os
-            if BORDER_DETECTION:
-                frame = cv2.imread(fileName)
-                warped = detect_a4_border(frame) if frame is not None else None
-                if warped is not None:
-                    border_path = os.path.join("debug_output", "capture_border.jpg")
-                    cv2.imwrite(border_path, warped)
-                    self.addImage("Border detected", border_path, addMenu=True)
-                    aruco_debug_path = os.path.join("debug_output", "capture_aruco_debug.jpg")
-                    if os.path.exists(aruco_debug_path):
-                        self.addImage("ArUco tags (debug)", aruco_debug_path, display=False, addMenu=True)
-                    self.addImage("Base image", fileName, display=False, addMenu=True)
-                    return
-                # Detection failed — show the failed-debug image if available
-                failed_path = os.path.join("debug_output", "capture_aruco_failed.jpg")
-                if os.path.exists(failed_path):
-                    self.addImage("ArUco FAILED (debug)", failed_path, addMenu=True)
-                    self.addImage("Base image", fileName, display=False, addMenu=True)
-                    return
-                print("[WARN] Red border not detected in opened image")
-
             self.addImage("Base image", fileName, addMenu=True)
 
     def addImage(self, name, fileName, display=True, addMenu=False):
