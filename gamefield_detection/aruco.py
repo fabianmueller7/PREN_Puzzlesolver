@@ -43,13 +43,13 @@ def _compute_aruco_transform(frame, debug_dir):
           f"(rejected candidates: {len(rejected)})")
 
     if ids is None or len(ids) < 4:
-        _save_failed_debug(detect_frame, corners, ids, rejected, debug_dir)
+        _save_failed_debug(frame, corners, ids, rejected, debug_dir)
         return None
 
     ids_flat = ids.flatten().tolist()
     if not all(i in ids_flat for i in ARUCO_TAG_IDS):
         print(f"[ArUco] need IDs {ARUCO_TAG_IDS}, got {ids_flat}")
-        _save_failed_debug(detect_frame, corners, ids, rejected, debug_dir)
+        _save_failed_debug(frame, corners, ids, rejected, debug_dir)
         return None
 
     tag_map = {int(tid): corn[0] for tid, corn in zip(ids_flat, corners)}
