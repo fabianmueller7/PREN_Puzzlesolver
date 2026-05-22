@@ -156,30 +156,33 @@ def move_pieces(robot, pieces: list):
     robot.gripper_up()
 
     for piece in pieces:
-        idx   = piece["piece_index"]
-        x, y  = piece["start_center_robot_mm"]
-        angle = piece["rotation_deg"]
+        idx     = piece["piece_index"]
+        x_s, y_s = piece["start_center_robot_mm"]
+        x_e, y_e = piece["end_center_robot_mm"]
+        angle   = piece["rotation_deg"]
 
-        angle = 180  # TEST: rotate all pieces 360°
+        print(f"  piece {idx}: ({x_s},{y_s}) → ({x_e},{y_e})  rotate {angle}°")
 
-        print(f"  piece {idx}: rotate {angle}° in place at ({x}, {y}) mm")
-
-        robot.go_to(x, y)
-        robot.gripper_down()
-        robot.gripper_up()
+        # Pick up (double-tap: first tap seats the piece, second picks it up)
+        robot.go_to(x_s, y_s)
         robot.gripper_down()
         robot.gripper_up()
         robot.gripper_down()
         robot.vacuum_pump_on()
         robot.gripper_on()
         robot.gripper_up()
-        robot.reset_rotation()
+
+        # Rotate to target orientation while in the air
         robot.gripper_rotate(angle)
 
+        # Move to solved position and place
+        robot.go_to(x_e, y_e)
         robot.gripper_down()
         robot.gripper_off()
         robot.vacuum_pump_off()
         robot.gripper_up()
+
+        robot.reset_rotation()
 
     robot.motors_disable()
     print("[3/3] Done")

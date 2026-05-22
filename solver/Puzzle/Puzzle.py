@@ -132,17 +132,34 @@ class Puzzle:
         if config.DEBUG_PIECE_CENTERS == 1:
             import json
             records = []
+
+            # Solved layout centre — used to centre the assembled puzzle on the field
+            ec_list = [self._piece_centroid(p) for p in self.pieces_]
+            valid_ecs = [ec for ec in ec_list if ec is not None]
+            layout_cx = float(np.mean([ec[0] for ec in valid_ecs])) if valid_ecs else 0.0
+            layout_cy = float(np.mean([ec[1] for ec in valid_ecs])) if valid_ecs else 0.0
+
             for i, p in enumerate(self.pieces_):
                 sc = _start_centers[id(p)]
-                ec = self._piece_centroid(p)
-                # _piece_centroid returns (col, row); pixel_to_robot expects (col, row) = (x, y)
+                ec = ec_list[i]
                 robot_start = config.pixel_to_robot(sc[0], sc[1])
+
+                # Map solved layout pixel → robot mm, centred on the playing field.
+                # Uses the same X/Y scale as the calibration (CAL_M diagonal terms).
+                if ec is not None:
+                    rx_end = config.CAL_CENTRE_X + (ec[0] - layout_cx) * config.CAL_M[0][0]
+                    ry_end = config.CAL_CENTRE_Y + (ec[1] - layout_cy) * config.CAL_M[1][1]
+                    robot_end = [round(rx_end), round(ry_end)]
+                else:
+                    robot_end = list(robot_start)
+
                 records.append({
                     "piece_index": i,
                     "grid_coord": list(p.coord) if hasattr(p, "coord") else None,
                     "start_center_px": [int(sc[0]), int(sc[1])],
                     "start_center_robot_mm": list(robot_start),
-                    "end_center": [int(ec[0]), int(ec[1])],
+                    "end_center": [int(ec[0]), int(ec[1])] if ec else None,
+                    "end_center_robot_mm": robot_end,
                     "rotation_deg": p.rotation_steps * 90,
                 })
             out_path = os.path.join(os.environ.get("ZOLVER_TEMP_DIR", "debug_output"), "piece_centers.json")
