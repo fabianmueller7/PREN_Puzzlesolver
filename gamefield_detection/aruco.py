@@ -2,6 +2,24 @@ from .config import ARUCO_TAG_IDS, BORDER_OUTPUT_W, BORDER_OUTPUT_H, \
     OFFSET_LEFT, OFFSET_RIGHT, OFFSET_TOP, OFFSET_BOTTOM
 
 
+def _save_failed_debug(frame, corners, ids, rejected, debug_dir):
+    """Save an annotated image when ArUco detection fails, to aid diagnosis."""
+    import cv2
+    import cv2.aruco as aruco
+    dbg = frame.copy()
+    if corners:
+        aruco.drawDetectedMarkers(dbg, corners, ids)
+    # Draw rejected candidates in red so we can see near-misses
+    for rj in rejected:
+        import numpy as np
+        pts = rj[0].astype(int)
+        for i in range(4):
+            cv2.line(dbg, tuple(pts[i]), tuple(pts[(i + 1) % 4]), (0, 0, 200), 1)
+    import os
+    cv2.imwrite(os.path.join(debug_dir, "capture_aruco_failed.jpg"), dbg)
+    print(f"[ArUco] failed-detection debug saved to {debug_dir}/capture_aruco_failed.jpg")
+
+
 def detect_aruco_border(frame):
     """Detect 4 ArUco corner markers on the LED frame and perspective-warp the playfield.
 
@@ -25,18 +43,28 @@ def detect_aruco_border(frame):
     params.detectInvertedMarker = True
     detector = aruco.ArucoDetector(dictionary, params)
 
-    corners, ids, _ = detector.detectMarkers(frame)
+    corners, ids, rejected = detector.detectMarkers(frame)
+
+    debug_dir = os.environ.get("ZOLVER_TEMP_DIR", "debug_output")
+
+    # Always save the input frame so we can inspect what the detector sees
+    cv2.imwrite(os.path.join(debug_dir, "capture_aruco_input.jpg"), frame)
+
+    found_ids = ids.flatten().tolist() if ids is not None else []
+    print(f"[ArUco] detected {len(found_ids)} marker(s): {found_ids}  "
+          f"(rejected candidates: {len(rejected)})")
 
     if ids is None or len(ids) < 4:
+        _save_failed_debug(frame, corners, ids, rejected, debug_dir)
         return None
 
     ids_flat = ids.flatten().tolist()
     if not all(i in ids_flat for i in ARUCO_TAG_IDS):
+        print(f"[ArUco] need IDs {ARUCO_TAG_IDS}, got {ids_flat}")
+        _save_failed_debug(frame, corners, ids, rejected, debug_dir)
         return None
 
     tag_map = {int(tid): corn[0] for tid, corn in zip(ids_flat, corners)}
-
-    debug_dir = os.environ.get("ZOLVER_TEMP_DIR", "debug_output")
 
     # --- debug: draw tag edges on a copy of the original frame ---
     debug_frame = frame.copy()

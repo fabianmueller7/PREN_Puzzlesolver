@@ -75,6 +75,12 @@ class Viewer(QMainWindow):
                         self.addImage("ArUco tags (debug)", aruco_debug_path, display=False, addMenu=True)
                     self.addImage("Base image", fileName, display=False, addMenu=True)
                     return
+                # Detection failed — show the failed-debug image if available
+                failed_path = os.path.join("debug_output", "capture_aruco_failed.jpg")
+                if os.path.exists(failed_path):
+                    self.addImage("ArUco FAILED (debug)", failed_path, addMenu=True)
+                    self.addImage("Base image", fileName, display=False, addMenu=True)
+                    return
                 print("[WARN] Red border not detected in opened image")
 
             self.addImage("Base image", fileName, addMenu=True)
