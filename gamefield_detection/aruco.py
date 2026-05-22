@@ -42,7 +42,7 @@ def detect_aruco_border(frame):
 
     # CLAHE on the luminance channel to recover contrast lost by bottom-lit LED
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+    clahe = cv2.createCLAHE(clipLimit=6.0, tileGridSize=(8, 8))
     enhanced = clahe.apply(gray)
     detect_frame = cv2.cvtColor(enhanced, cv2.COLOR_GRAY2BGR)
     cv2.imwrite(os.path.join(debug_dir, "capture_aruco_input.jpg"), detect_frame)

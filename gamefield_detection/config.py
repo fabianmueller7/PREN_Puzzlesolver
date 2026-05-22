@@ -11,5 +11,5 @@ ARUCO_TAG_IDS = [0, 1, 2, 3]  # TL, TR, BR, BL  (DICT_4X4_50)
 # negative expands it outward (includes more).
 OFFSET_LEFT   = 15
 OFFSET_RIGHT  = 10
-OFFSET_TOP    = 40
-OFFSET_BOTTOM = 40
+OFFSET_TOP    = 20
+OFFSET_BOTTOM = 20
