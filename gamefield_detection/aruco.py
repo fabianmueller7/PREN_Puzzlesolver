@@ -29,19 +29,14 @@ def _compute_aruco_transform(frame, debug_dir):
     import numpy as np
     import os
 
-    # CLAHE on the luminance channel to recover contrast lost by bottom-lit LED
-    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    clahe = cv2.createCLAHE(clipLimit=6.0, tileGridSize=(8, 8))
-    enhanced = clahe.apply(gray)
-    detect_frame = cv2.cvtColor(enhanced, cv2.COLOR_GRAY2BGR)
-    cv2.imwrite(os.path.join(debug_dir, "capture_aruco_input.jpg"), detect_frame)
+    cv2.imwrite(os.path.join(debug_dir, "capture_aruco_input.jpg"), frame)
 
     dictionary = aruco.getPredefinedDictionary(aruco.DICT_4X4_50)
     params = aruco.DetectorParameters()
     params.detectInvertedMarker = True
     detector = aruco.ArucoDetector(dictionary, params)
 
-    corners, ids, rejected = detector.detectMarkers(detect_frame)
+    corners, ids, rejected = detector.detectMarkers(frame)
 
     found_ids = ids.flatten().tolist() if ids is not None else []
     print(f"[ArUco] detected {len(found_ids)} marker(s): {found_ids}  "
