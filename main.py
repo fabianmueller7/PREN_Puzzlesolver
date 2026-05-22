@@ -167,7 +167,7 @@ def move_pieces(robot, pieces: list):
         robot.go_to(x, y)
         robot.gripper_down()
         robot.gripper_up()
-         robot.gripper_down()
+        robot.gripper_down()
         robot.gripper_up()
         robot.gripper_down()
         robot.vacuum_pump_on()
