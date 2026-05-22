@@ -5,18 +5,19 @@ DEBUG_PIECE_CENTERS = 1  # Writes piece_centers.json to debug_output/ with each 
 
 EDGE_OFFSET = 0  # pixels (6 pixels ≈ 1mm) — shifts each edge outward to show the manufacturing tolerance band in debug output
 
-# Affine calibration: maps cropped-image pixel (px, py) → robot mm (rx, ry).
-# Robot zero is top-right; X increases to the left, Y increases downward.
-# Output image: 906×648 px.
-# Fit against 3 measured positions:
-#   Oben Rechts  px=(450,482) → robot=( 73,252)
-#   Oben Links   px=(295,182) → robot=(212,234)
-#   Unten Mitte  px=(693,225) → robot=(150,335)
+# Affine calibration: maps warped-image pixel (px, py) → robot mm (rx, ry).
+# Both systems: (0,0) = top-left, X increases right, Y increases down.
+# Robot X increases to the LEFT physically (home is on the right side),
+# hence the negative px coefficient in the rx row.
+# Output image: 906×648 px (ArUco warp).
+# Calibrated against 2 verified positions (cross-terms reflect minor tilt):
+#   Oben rechts  px=(756,213) → robot=( 55,250)
+#   Links        px=(136,364) → robot=(260,300)
 #   robot_x = CAL_M[0][0]*px + CAL_M[0][1]*py + CAL_M[0][2]
 #   robot_y = CAL_M[1][0]*px + CAL_M[1][1]*py + CAL_M[1][2]
 CAL_M = [
-    [-0.111971, -0.405482, 318.829],
-    [ 0.261906, -0.075318, 170.446],
+    [-0.331930, -0.005277, 307.063358],
+    [ 0.001981,  0.339260, 176.240040],
 ]
 
 
