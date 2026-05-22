@@ -7,25 +7,24 @@ EDGE_OFFSET = 0  # pixels (6 pixels ≈ 1mm) — shifts each edge outward to sho
 
 # Affine calibration: maps warped-image pixel (px, py) → robot mm (rx, ry).
 # Both systems: (0,0) = top-left, X increases right, Y increases down.
-# Robot X increases to the LEFT physically (home is on the right side),
-# hence the negative px coefficient in the rx row.
 # Output image: 906×648 px (ArUco warp, playing field fills the image exactly).
-# Fit from physical playing-field corners:
+# Least-squares fit from all 4 measured playing-field corners (residual ±0.9 mm):
 #   Oben rechts  px=(905,   0) → robot=(  6.5, 176)
+#   Oben links   px=(  0,   0) → robot=(303.0, 175)
 #   Unten links  px=(  0, 647) → robot=(303.0, 386)
-#   robot_x = CAL_M[0][0]*px + CAL_M[0][2]
-#   robot_y = CAL_M[1][1]*py + CAL_M[1][2]
+#   Unten rechts px=(905, 647) → robot=(  3.0, 383)
+#   robot_x = CAL_M[0][0]*px + CAL_M[0][1]*py + CAL_M[0][2]
+#   robot_y = CAL_M[1][0]*px + CAL_M[1][1]*py + CAL_M[1][2]
 CAL_M = [
-    [-0.327624, 0.0, 303.0],
-    [0.0, 0.324575, 176.0],
+    [-0.329558, -0.002705, 303.875],
+    [-0.001105,  0.323029, 176.000],
 ]
 
-# Fine-tune knobs applied after the affine transform.
-# Positions are scaled outward from CAL_CENTRE by CAL_SCALE_X / CAL_SCALE_Y.
-# 1.0 = no correction.  Increase to push outward; decrease to pull inward.
-# Error grows with distance from centre → scale is the right knob to turn.
-CAL_CENTRE_X = 154.75  # robot mm  (midpoint between Oben-rechts and Unten-links in X)
-CAL_CENTRE_Y = 281.0   # robot mm  (midpoint between Oben-rechts and Unten-links in Y)
+# Fine-tune knobs: scale positions outward from CAL_CENTRE after the affine transform.
+# 1.0 = no correction. Increase to push outward; decrease to pull inward.
+# Tune in steps of 0.005 (~0.6 mm per 100 mm from centre).
+CAL_CENTRE_X = 153.88  # robot mm
+CAL_CENTRE_Y = 280.00  # robot mm
 CAL_SCALE_X  = 1.0
 CAL_SCALE_Y  = 1.0
 
