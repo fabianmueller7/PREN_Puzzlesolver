@@ -157,9 +157,7 @@ def move_pieces(robot, pieces: list):
     robot.gripper_up()
     robot.home_x()
     robot.home_y()
-    robot.reset_rotation()
     robot.gripper_up()
-    robot.reset_rotation()
 
     for piece in pieces:
         idx     = piece["piece_index"]
