@@ -77,16 +77,16 @@ class Puzzle:
                 id(p): p.img_centroid if p.img_centroid is not None else self._piece_centroid(p)
                 for p in self.pieces_
             }
-            # Capture the first point of the first non-empty edge for each piece
-            # BEFORE solving (shapes are still in original image coordinates).
-            # Used after solving to measure the actual physical rotation applied.
+            # Capture ALL edge points for each piece BEFORE solving
+            # (shapes are still in original image coordinates).
+            # Stored as a single (N, 2) array so the rotation estimator can use
+            # all points for a robust circular-mean angle measurement.
             _start_ref_pts = {}
             for p in self.pieces_:
                 sc = _start_centers[id(p)]
-                for edge in p.edges_:
-                    if len(edge.shape) > 0:
-                        _start_ref_pts[id(p)] = (sc, np.array(edge.shape[0], dtype=float))
-                        break
+                all_pts = [np.asarray(e.shape, dtype=float) for e in p.edges_ if len(e.shape) > 0]
+                if all_pts:
+                    _start_ref_pts[id(p)] = (sc, np.concatenate(all_pts, axis=0))
 
         connected_pieces = []
         border_pieces = self.border_pieces.copy()
@@ -163,26 +163,46 @@ class Puzzle:
                 else:
                     robot_end = list(robot_start)
 
-                # Compute rotation_deg from the actual geometric transformation:
-                # measure how much the reference edge point rotated around the centroid.
-                # This avoids the CW/CCW convention mismatch between rotate_direction()
-                # (which counts CW label-steps) and the physical shape rotations applied
-                # by stick_pieces / the alignment loop (which are CCW in screen coords).
+                # Compute rotation_deg from the actual geometric transformation.
+                # Strategy: for every edge point that is far enough from the centroid,
+                # measure the angle of (pt - centroid) before and after solving and
+                # accumulate the per-point deltas as unit vectors on the unit circle.
+                # Averaging the unit vectors (circular mean) is robust against outliers
+                # and works even when individual points are close to the centroid.
                 rotation_deg = 0
                 if id(p) in _start_ref_pts:
-                    sc_orig, pt_orig = _start_ref_pts[id(p)]
-                    centroid_final = ec if ec is not None else np.array(sc, dtype=float)
-                    for edge in p.edges_:
-                        if len(edge.shape) > 0:
-                            pt_final = np.array(edge.shape[0], dtype=float)
-                            dx0, dy0 = pt_orig[0] - sc_orig[0], pt_orig[1] - sc_orig[1]
-                            dx1, dy1 = pt_final[0] - centroid_final[0], pt_final[1] - centroid_final[1]
-                            if abs(dx0) > 1e-6 or abs(dy0) > 1e-6:
-                                import math as _math
-                                delta = _math.degrees(_math.atan2(dy1, dx1) - _math.atan2(dy0, dx0))
-                                delta = (delta + 180) % 360 - 180   # normalise to (-180, 180]
-                                rotation_deg = round(delta, 1)   # raw float, e.g. 56.3 or -112.7
-                            break
+                    import math as _math
+                    sc_orig, pts_orig = _start_ref_pts[id(p)]
+                    centroid_final = np.array(ec, dtype=float) if ec is not None else np.array(sc, dtype=float)
+                    sc_orig_arr = np.array(sc_orig, dtype=float)
+
+                    # Gather all edge points in their final (post-solve) positions
+                    final_pts_list = [e.shape for e in p.edges_ if len(e.shape) > 0]
+                    if final_pts_list:
+                        pts_final = np.concatenate(final_pts_list, axis=0)   # (N, 2)
+
+                        # Vectors from centroid before solving
+                        vecs_before = pts_orig - sc_orig_arr          # (N, 2)
+                        # Vectors from centroid after solving
+                        vecs_after  = pts_final - centroid_final       # (N, 2)
+
+                        # Keep only points far enough from centroid (>= 3 px) in BOTH states
+                        dist_before = np.linalg.norm(vecs_before, axis=1)
+                        dist_after  = np.linalg.norm(vecs_after,  axis=1)
+                        mask = (dist_before >= 3.0) & (dist_after >= 3.0)
+
+                        if mask.sum() > 0:
+                            vb = vecs_before[mask]
+                            va = vecs_after[mask]
+                            # Per-point angle delta (in radians), then circular mean
+                            angles_b = np.arctan2(vb[:, 1], vb[:, 0])
+                            angles_a = np.arctan2(va[:, 1], va[:, 0])
+                            deltas   = angles_a - angles_b
+                            # Circular mean: average sin/cos to handle wrap-around
+                            mean_sin = np.mean(np.sin(deltas))
+                            mean_cos = np.mean(np.cos(deltas))
+                            delta_rad = _math.atan2(mean_sin, mean_cos)
+                            rotation_deg = round(_math.degrees(delta_rad), 1)
 
                 records.append({
                     "piece_index": i,
