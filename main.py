@@ -3,6 +3,7 @@ import glob
 import json
 import os
 import sys
+from time import sleep
 
 # ---------------------------------------------------------------------------
 # Robot / pipeline configuration
@@ -181,6 +182,7 @@ def move_pieces(robot, pieces: list):
 
         # Rotate to target orientation while in the air
         robot.reset_rotation()
+        sleep(1)
         robot.gripper_rotate(angle)
 
         # Move to solved position and place
