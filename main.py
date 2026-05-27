@@ -10,6 +10,11 @@ import sys
 ROBOT_PORT    = "/dev/ttyACM0"   # serial port of the Pico
 CAMERA_RESOLUTION = (1920, 1080)  # capture resolution
 
+# rotation_deg from the solver is CCW in screen coordinates (positive = CCW).
+# Set ROTATION_SIGN = -1 if gripper_rotate(positive) means CW (most common).
+# Set ROTATION_SIGN = +1 if gripper_rotate(positive) means CCW.
+ROTATION_SIGN = -1
+
 
 CAPTURE_PATH        = "debug_output/capture.jpg"
 CAPTURE_RAW_PATH    = "debug_output/capture_raw.jpg"
@@ -160,9 +165,12 @@ def move_pieces(robot, pieces: list):
         idx     = piece["piece_index"]
         x_s, y_s = piece["start_center_robot_mm"]
         x_e, y_e = piece["end_center_robot_mm"]
-        angle   = piece["rotation_deg"] % 360
+        # rotation_deg is CCW in screen coords; apply ROTATION_SIGN to match robot convention.
+        angle = ROTATION_SIGN * (piece["rotation_deg"] % 360)
         if angle > 180:
             angle -= 360
+        if angle < -180:
+            angle += 360
 
         print(f"  piece {idx}: ({x_s},{y_s}) → ({x_e},{y_e})  rotate {angle}°")
 

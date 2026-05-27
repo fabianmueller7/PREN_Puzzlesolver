@@ -77,6 +77,16 @@ class Puzzle:
                 id(p): p.img_centroid if p.img_centroid is not None else self._piece_centroid(p)
                 for p in self.pieces_
             }
+            # Capture the first point of the first non-empty edge for each piece
+            # BEFORE solving (shapes are still in original image coordinates).
+            # Used after solving to measure the actual physical rotation applied.
+            _start_ref_pts = {}
+            for p in self.pieces_:
+                sc = _start_centers[id(p)]
+                for edge in p.edges_:
+                    if len(edge.shape) > 0:
+                        _start_ref_pts[id(p)] = (sc, np.array(edge.shape[0], dtype=float))
+                        break
 
         connected_pieces = []
         border_pieces = self.border_pieces.copy()
@@ -153,6 +163,27 @@ class Puzzle:
                 else:
                     robot_end = list(robot_start)
 
+                # Compute rotation_deg from the actual geometric transformation:
+                # measure how much the reference edge point rotated around the centroid.
+                # This avoids the CW/CCW convention mismatch between rotate_direction()
+                # (which counts CW label-steps) and the physical shape rotations applied
+                # by stick_pieces / the alignment loop (which are CCW in screen coords).
+                rotation_deg = 0
+                if id(p) in _start_ref_pts:
+                    sc_orig, pt_orig = _start_ref_pts[id(p)]
+                    centroid_final = ec if ec is not None else np.array(sc, dtype=float)
+                    for edge in p.edges_:
+                        if len(edge.shape) > 0:
+                            pt_final = np.array(edge.shape[0], dtype=float)
+                            dx0, dy0 = pt_orig[0] - sc_orig[0], pt_orig[1] - sc_orig[1]
+                            dx1, dy1 = pt_final[0] - centroid_final[0], pt_final[1] - centroid_final[1]
+                            if abs(dx0) > 1e-6 or abs(dy0) > 1e-6:
+                                import math as _math
+                                delta = _math.degrees(_math.atan2(dy1, dx1) - _math.atan2(dy0, dx0))
+                                delta = (delta + 180) % 360 - 180   # normalise to (-180, 180]
+                                rotation_deg = int(round(delta / 90) * 90) % 360
+                            break
+
                 records.append({
                     "piece_index": i,
                     "grid_coord": list(p.coord) if hasattr(p, "coord") else None,
@@ -160,7 +191,7 @@ class Puzzle:
                     "start_center_robot_mm": list(robot_start),
                     "end_center_px": [int(ec[0]), int(ec[1])] if ec else None,
                     "end_center_robot_mm": robot_end,
-                    "rotation_deg": p.rotation_steps * 90,
+                    "rotation_deg": rotation_deg,
                 })
             out_path = os.path.join(os.environ.get("ZOLVER_TEMP_DIR", "debug_output"), "piece_centers.json")
             with open(out_path, "w") as f:
