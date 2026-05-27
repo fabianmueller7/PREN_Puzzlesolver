@@ -18,12 +18,13 @@ CAPTURE_COARSE_PATH = "debug_output/capture_coarse.jpg"
 # Crop region within the captured frame (pixels).
 # Set to None to use the full frame.
 # Calibrate once by running: python main.py --show-crop
-CROP_X =  367  # left edge   (P2 x)
-CROP_Y =  203  # top edge    (P1 y)
-CROP_W = 1050  # width       (+30 % of 906)
-CROP_H =  880  # height      (+30 % of 648)
+CROP_X =  262  # left edge   (P2 x)
+CROP_Y =  115  # top edge    (P1 y)
+CROP_W = 1260  # width       (+20 % from previous 1050)
+CROP_H = 1056  # height      (+20 % from previous 880)
 
-from border_detection import BORDER_DETECTION, BORDER_OUTPUT_W, BORDER_OUTPUT_H, detect_a4_border
+from gamefield_detection import BORDER_DETECTION, BORDER_OUTPUT_W, BORDER_OUTPUT_H, \
+    detect_a4_border, detect_a4_border_two_frame
 
 
 # ---------------------------------------------------------------------------
@@ -55,33 +56,59 @@ def _crop(frame):
 
 
 
-def take_picture(save_path: str = CAPTURE_PATH) -> str:
-    """Capture one frame from the Pi camera, save raw and cropped versions."""
+def take_picture(save_path: str = CAPTURE_PATH, robot=None) -> str:
+    """Capture one or two frames from the Pi camera and return the warped playfield path.
+
+    When *robot* is provided and BORDER_DETECTION is enabled, uses a two-shot
+    strategy: LED off → capture detection frame (markers visible) → LED on →
+    capture puzzle frame (correct lighting). ArUco transform is computed from
+    the dark frame and applied to the lit frame.
+    """
+    import time
     import cv2
     from picamera2 import Picamera2
 
     cam = Picamera2()
     cam.configure(cam.create_still_configuration(main={"size": CAMERA_RESOLUTION}))
     cam.start()
-    frame = cam.capture_array()   # numpy array, RGB
+
+    if robot is not None and BORDER_DETECTION:
+        robot.led_off()
+        time.sleep(0.5)                      # let exposure settle with LED off
+        detect_raw = cam.capture_array()
+        robot.led_on()
+        time.sleep(0.5)                      # let exposure settle with LED on
+        puzzle_raw = cam.capture_array()
+    else:
+        if robot is not None:
+            robot.led_on()
+        puzzle_raw = cam.capture_array()
+        detect_raw = puzzle_raw              # single-shot: same frame for both
+
     cam.stop()
     cam.close()
 
-    frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-    cv2.imwrite(CAPTURE_RAW_PATH, frame)
-    print(f"[1/3] Raw capture saved:    {CAPTURE_RAW_PATH}  ({frame.shape[1]}×{frame.shape[0]} px)")
-    coarse = _crop(frame)
-    cv2.imwrite(CAPTURE_COARSE_PATH, coarse)
-    print(f"[1/3] Coarse crop saved:       {CAPTURE_COARSE_PATH}  ({coarse.shape[1]}×{coarse.shape[0]} px)")
+    detect_frame = cv2.cvtColor(detect_raw, cv2.COLOR_RGB2BGR)
+    puzzle_frame = cv2.cvtColor(puzzle_raw, cv2.COLOR_RGB2BGR)
+
+    cv2.imwrite(CAPTURE_RAW_PATH, puzzle_frame)
+    print(f"[1/3] Raw capture saved:       {CAPTURE_RAW_PATH}  ({puzzle_frame.shape[1]}×{puzzle_frame.shape[0]} px)")
+
+    detect_coarse = _crop(detect_frame)
+    puzzle_coarse = _crop(puzzle_frame)
+    cv2.imwrite(CAPTURE_COARSE_PATH, puzzle_coarse)
+    print(f"[1/3] Coarse crop saved:       {CAPTURE_COARSE_PATH}  ({puzzle_coarse.shape[1]}×{puzzle_coarse.shape[0]} px)")
+
     if BORDER_DETECTION:
-        warped = detect_a4_border(coarse)
+        warped = detect_a4_border_two_frame(detect_coarse, puzzle_coarse)
         if warped is not None:
             cv2.imwrite(save_path, warped)
             print(f"[1/3] Border-detected capture: {save_path}  ({warped.shape[1]}×{warped.shape[0]} px)")
             return save_path
-        print("[WARN] Red border not detected — falling back to static crop")
-    cv2.imwrite(save_path, coarse)
-    print(f"[1/3] Cropped capture saved:   {save_path}  ({coarse.shape[1]}×{coarse.shape[0]} px)")
+        print("[WARN] Border not detected — falling back to static crop")
+
+    cv2.imwrite(save_path, puzzle_coarse)
+    print(f"[1/3] Cropped capture saved:   {save_path}  ({puzzle_coarse.shape[1]}×{puzzle_coarse.shape[0]} px)")
     return save_path
 
 
@@ -96,7 +123,7 @@ def solve_puzzle(image_path: str, green_screen: bool = False) -> list:
       [{"piece_index": 0,
         "grid_coord": [col, row],
         "start_center_robot_mm": [x, y],
-        "end_center": [px, py]}, ...]
+        "end_center_px": [px, py]}, ...]
     """
     from solver.Puzzle.Puzzle import Puzzle
 
@@ -129,20 +156,28 @@ def move_pieces(robot, pieces: list):
     robot.gripper_up()
 
     for piece in pieces:
-        idx   = piece["piece_index"]
-        x, y  = piece["start_center_robot_mm"]
-        angle = piece["rotation_deg"]
+        idx     = piece["piece_index"]
+        x_s, y_s = piece["start_center_robot_mm"]
+        x_e, y_e = piece["end_center_robot_mm"]
+        angle   = piece["rotation_deg"] % 360
+        if angle > 180:
+            angle -= 360
 
-        print(f"  piece {idx}: rotate {angle}° in place at ({x}, {y}) mm")
+        print(f"  piece {idx}: ({x_s},{y_s}) → ({x_e},{y_e})  rotate {angle}°")
 
-        robot.go_to(x, y)
+        # Pick up (double-tap: first tap seats the piece, second picks it up)
+        robot.go_to(x_s, y_s)
         robot.gripper_down()
         robot.vacuum_pump_on()
         robot.gripper_on()
         robot.gripper_up()
 
+        # Rotate to target orientation while in the air
+        robot.reset_rotation()
         robot.gripper_rotate(angle)
 
+        # Move to solved position and place
+        robot.go_to(x_e, y_e)
         robot.gripper_down()
         robot.gripper_off()
         robot.vacuum_pump_off()
@@ -163,8 +198,7 @@ def run_pipeline(green_screen: bool = False):
     _setup_debug_dir()
     robot = PicoInterface(port=ROBOT_PORT)
     try:
-        robot.led_on()
-        image_path = take_picture()
+        image_path = take_picture(robot=robot)
         pieces     = solve_puzzle(image_path, green_screen=green_screen)
         move_pieces(robot, pieces)
         robot.led_off()

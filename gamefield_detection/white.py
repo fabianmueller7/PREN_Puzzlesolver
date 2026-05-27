@@ -1,14 +1,8 @@
-# Toggle: set to False to skip playfield detection and use the static crop only.
-BORDER_DETECTION = True
-
-BORDER_OUTPUT_W = 906
-BORDER_OUTPUT_H = 648
-
-INSET = 6  # px trimmed on each side to remove residual border slither
+from .config import BORDER_OUTPUT_W, BORDER_OUTPUT_H, INSET
 
 
-def detect_a4_border(frame):
-    """Detect the white playfield background, correct rotation, and crop to it.
+def detect_white_border(frame):
+    """White-HSV playfield detection (fallback when ArUco tags are not visible).
     Returns None when no clear white rectangle is found."""
     import cv2
     import os

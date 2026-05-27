@@ -10,6 +10,7 @@ PORT   = "/dev/ttyACM0"
 
 robot = PicoInterface(port=PORT)
 
+robot.gripper_off()
 robot.motors_disable()
 robot.close()
 

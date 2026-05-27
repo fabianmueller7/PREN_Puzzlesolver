@@ -5,25 +5,36 @@ DEBUG_PIECE_CENTERS = 1  # Writes piece_centers.json to debug_output/ with each 
 
 EDGE_OFFSET = 0  # pixels (6 pixels ≈ 1mm) — shifts each edge outward to show the manufacturing tolerance band in debug output
 
-# Affine calibration: maps cropped-image pixel (px, py) → robot mm (rx, ry).
-# Robot zero is top-right; X increases to the left, Y increases downward.
-# Output image: 906×648 px (white-background detection).
-# Recalibrated to fix systematic 1-3 mm towards-center offset.
-# Fit against 2 verified robot positions (cross-terms kept from prior fit):
-#   Oben rechts  px=(756,213) → robot=( 55,250)
-#   Links        px=(136,364) → robot=(260,300)
+# Affine calibration: maps warped-image pixel (px, py) → robot mm (rx, ry).
+# Both systems: (0,0) = top-left, X increases right, Y increases down.
+# Output image: 906×648 px (ArUco warp, playing field fills the image exactly).
+# Least-squares fit from 4 measured playing-field corners (residual ±0.9 mm):
+#   Oben rechts  px=(905,   0) → robot=(  6.5, 176)
+#   Oben links   px=(  0,   0) → robot=(303.0, 175)
+#   Unten links  px=(  0, 647) → robot=(303.0, 386)
+#   Unten rechts px=(905, 647) → robot=(  3.0, 383)
 #   robot_x = CAL_M[0][0]*px + CAL_M[0][1]*py + CAL_M[0][2]
 #   robot_y = CAL_M[1][0]*px + CAL_M[1][1]*py + CAL_M[1][2]
 CAL_M = [
-    [-0.331930, -0.005277, 307.063358],
-    [ 0.001981,  0.339260, 176.240040],
+    [-0.329558, -0.002705, 303.875],
+    [-0.001105,  0.323029, 177.500],
 ]
+
+# Fine-tune knobs: scale positions outward from CAL_CENTRE after the affine transform.
+# 1.0 = no correction. Increase to push outward; decrease to pull inward.
+# Tune in steps of 0.005 (~0.5 mm per 100 mm from centre).
+CAL_CENTRE_X = 153.88  # robot mm  (midpoint of the 4 corners)
+CAL_CENTRE_Y = 280.00  # robot mm
+CAL_SCALE_X  = 1.0
+CAL_SCALE_Y  = 1.0
 
 
 def pixel_to_robot(pixel_x, pixel_y):
     """Convert image pixel coordinates to robot mm coordinates."""
     rx = CAL_M[0][0] * pixel_x + CAL_M[0][1] * pixel_y + CAL_M[0][2]
     ry = CAL_M[1][0] * pixel_x + CAL_M[1][1] * pixel_y + CAL_M[1][2]
+    rx = CAL_CENTRE_X + (rx - CAL_CENTRE_X) * CAL_SCALE_X
+    ry = CAL_CENTRE_Y + (ry - CAL_CENTRE_Y) * CAL_SCALE_Y
     return round(rx), round(ry)
 
 # A4 landscape at 150 DPI
