@@ -158,7 +158,7 @@ class Puzzle:
                     "grid_coord": list(p.coord) if hasattr(p, "coord") else None,
                     "start_center_px": [int(sc[0]), int(sc[1])],
                     "start_center_robot_mm": list(robot_start),
-                    "end_center": [int(ec[0]), int(ec[1])] if ec else None,
+                    "end_center_px": [int(ec[0]), int(ec[1])] if ec else None,
                     "end_center_robot_mm": robot_end,
                     "rotation_deg": p.rotation_steps * 90,
                 })

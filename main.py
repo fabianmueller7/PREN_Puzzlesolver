@@ -123,7 +123,7 @@ def solve_puzzle(image_path: str, green_screen: bool = False) -> list:
       [{"piece_index": 0,
         "grid_coord": [col, row],
         "start_center_robot_mm": [x, y],
-        "end_center": [px, py]}, ...]
+        "end_center_px": [px, py]}, ...]
     """
     from solver.Puzzle.Puzzle import Puzzle
 
@@ -167,8 +167,6 @@ def move_pieces(robot, pieces: list):
 
         # Pick up (double-tap: first tap seats the piece, second picks it up)
         robot.go_to(x_s, y_s)
-        robot.gripper_down()
-        robot.gripper_up()
         robot.gripper_down()
         robot.vacuum_pump_on()
         robot.gripper_on()
