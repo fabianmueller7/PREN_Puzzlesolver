@@ -181,7 +181,7 @@ class Puzzle:
                                 import math as _math
                                 delta = _math.degrees(_math.atan2(dy1, dx1) - _math.atan2(dy0, dx0))
                                 delta = (delta + 180) % 360 - 180   # normalise to (-180, 180]
-                                rotation_deg = int(round(delta / 90) * 90) % 360
+                                rotation_deg = round(delta, 1)   # raw float, e.g. 56.3 or -112.7
                             break
 
                 records.append({

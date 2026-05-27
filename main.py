@@ -166,7 +166,7 @@ def move_pieces(robot, pieces: list):
         x_s, y_s = piece["start_center_robot_mm"]
         x_e, y_e = piece["end_center_robot_mm"]
         # rotation_deg is CCW in screen coords; apply ROTATION_SIGN to match robot convention.
-        angle = ROTATION_SIGN * (piece["rotation_deg"] % 360)
+        angle = ROTATION_SIGN * piece["rotation_deg"]
         if angle > 180:
             angle -= 360
         if angle < -180:
