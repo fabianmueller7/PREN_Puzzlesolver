@@ -194,9 +194,11 @@ class Puzzle:
                         if mask.sum() > 0:
                             vb = vecs_before[mask]
                             va = vecs_after[mask]
-                            # Per-point angle delta (in radians), then circular mean
-                            angles_b = np.arctan2(vb[:, 1], vb[:, 0])
-                            angles_a = np.arctan2(va[:, 1], va[:, 0])
+                            # Per-point angle delta (in radians), then circular mean.
+                            # Negate y to convert from screen coords (y-down) to math
+                            # coords (y-up / CCW-positive), matching angle_between().
+                            angles_b = np.arctan2(-vb[:, 1], vb[:, 0])
+                            angles_a = np.arctan2(-va[:, 1], va[:, 0])
                             deltas   = angles_a - angles_b
                             # Circular mean: average sin/cos to handle wrap-around
                             mean_sin = np.mean(np.sin(deltas))
