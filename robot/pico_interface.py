@@ -117,6 +117,7 @@ class PicoInterface:
         return self.call("go_to_z", z=zCoords)
 
     def gripper_rotate(self, aCoords):
+        aCoords += 180
         return self.call("gripper_rotate", a=aCoords)
 
     def home_x(self):
@@ -129,6 +130,9 @@ class PicoInterface:
         return self.call("home_z")
 
     def reset_rotation(self):
+        """Declare the current angular position as 0° — do NOT move the axis.
+        All subsequent gripper_rotate(angle) calls are relative to this new zero.
+        The firmware must implement this as a position-counter reset, not a homing move."""
         return self.call("reset_rotation")
 
     def gpo1_on(self):
