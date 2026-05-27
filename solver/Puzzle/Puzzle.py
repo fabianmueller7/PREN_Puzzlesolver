@@ -143,22 +143,33 @@ class Puzzle:
             import json
             records = []
 
-            # Solved layout centre — used to centre the assembled puzzle on the field
             ec_list = [self._piece_centroid(p) for p in self.pieces_]
-            valid_ecs = [ec for ec in ec_list if ec is not None]
-            layout_cx = float(np.mean([ec[0] for ec in valid_ecs])) if valid_ecs else 0.0
-            layout_cy = float(np.mean([ec[1] for ec in valid_ecs])) if valid_ecs else 0.0
+
+            # Solved layout centre = midpoint of the overall bounding box of all
+            # shape points.  After translate_puzzle() the minimum is exactly (0,0),
+            # so centre = max/2.  This is independent of where piece centroids cluster
+            # and maps correctly to CAL_CENTRE_X/Y (field centre in robot mm).
+            all_solved_pts = np.concatenate(
+                [e.shape for p in self.pieces_ for e in p.edges_ if len(e.shape) > 0]
+            )
+            layout_cx = float(all_solved_pts[:, 0].max()) / 2.0   # col axis
+            layout_cy = float(all_solved_pts[:, 1].max()) / 2.0   # row axis
 
             for i, p in enumerate(self.pieces_):
                 sc = _start_centers[id(p)]
                 ec = ec_list[i]
                 robot_start = config.pixel_to_robot(sc[0], sc[1])
 
-                # Map solved layout pixel → robot mm, centred on the playing field.
-                # Uses the same X/Y scale as the calibration (CAL_M diagonal terms).
+                # Map solved layout pixel → robot mm.
+                # Full affine transform (all four CAL_M terms) + CAL_SCALE correction,
+                # consistent with pixel_to_robot() used for start positions.
                 if ec is not None:
-                    rx_end = config.CAL_CENTRE_X + (ec[0] - layout_cx) * config.CAL_M[0][0]
-                    ry_end = config.CAL_CENTRE_Y + (ec[1] - layout_cy) * config.CAL_M[1][1]
+                    dx = ec[0] - layout_cx
+                    dy = ec[1] - layout_cy
+                    rx_end = (config.CAL_M[0][0] * dx + config.CAL_M[0][1] * dy) * config.CAL_SCALE_X
+                    ry_end = (config.CAL_M[1][0] * dx + config.CAL_M[1][1] * dy) * config.CAL_SCALE_Y
+                    rx_end = config.CAL_CENTRE_X + rx_end
+                    ry_end = config.CAL_CENTRE_Y + ry_end
                     robot_end = [round(rx_end), round(ry_end)]
                 else:
                     robot_end = list(robot_start)
