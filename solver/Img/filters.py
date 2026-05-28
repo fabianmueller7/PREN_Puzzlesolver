@@ -278,86 +278,153 @@ def _pack_pieces_grid(list_img, modulo, path):
     config.save_debug_img(path, grid)
 
 
-def my_find_corner_signature(cnt, green=False):
-    """Determine corner/edge positions by analyzing a piece contour."""
-    edges = []
-    types_pieces = []
+
+def _rectangle_score(pts):
+    """Sum of squared cosines of interior angles (0 = perfect rectangle).
+
+    pts: (4, 2) float array of corner coordinates in contour traversal order.
+    A perfect rectangle has cos(90°)=0 at every corner, so the total is 0.
+    """
+    total = 0.0
+    for i in range(4):
+        v1 = pts[(i - 1) % 4] - pts[i]
+        v2 = pts[(i + 1) % 4] - pts[i]
+        n1, n2 = np.linalg.norm(v1), np.linalg.norm(v2)
+        if n1 < 1e-9 or n2 < 1e-9:
+            return float('inf')
+        cos_a = np.dot(v1, v2) / (n1 * n2)
+        total += cos_a * cos_a
+    return total
+
+
+def _find_corners_curvature_peaks(cnt, green=False):
+    """Find the 4 piece corners as the top positive curvature peaks.
+
+    Piece corners are sharp ~90° left-turns in the contour, producing the
+    largest positive peaks in the smoothed angular-velocity signal.  Head and
+    hole shoulder peaks are smaller and wash out at higher sigma values.
+
+    At each sigma we evaluate all C(K,4) spacing-valid combinations and score
+    each by how closely the 4 points form a rectangle.  The global best-scoring
+    combination across all sigma levels is returned, with early exit once the
+    rectangle score is below a tight threshold.
+
+    Returns a sorted numpy int array of 4 contour indices, or None on failure.
+    """
+    n = len(cnt)
+    cnt_pts = cnt[:, 0, :].astype(float)
+    cnt_convert = [c[0] for c in cnt]
+    OFFSET_LOW  = n / 10
+    OFFSET_HIGH = n / 2.0
+    RECT_THRESHOLD = 0.05   # ~cos²(13°) per corner on average; exit early if beaten
+
     sigma = 5
     max_sigma = 12 if green else 20
+    best_corners = None
+    best_score = float('inf')
 
     while sigma <= max_sigma:
-        print(f"Smooth curve with sigma={sigma}...")
-        tmp_combs_final = []
-
-        cnt_convert = [c[0] for c in cnt]
-        relative_angles = np.array(get_relative_angles(np.array(cnt_convert), sigma=sigma))
-        relative_angles_inverse = -relative_angles.copy()
-
-        extr_tmp = detect_peaks(relative_angles, mph=0.3 * np.max(relative_angles))
-        relative_angles = np.roll(relative_angles, int(len(relative_angles) / 2))
-        extr_tmp = np.append(
-            extr_tmp,
-            (detect_peaks(relative_angles, mph=0.3 * max(relative_angles))
-             - int(len(relative_angles) / 2)) % len(relative_angles),
-            axis=0,
-        )
-        relative_angles = np.roll(relative_angles, -int(len(relative_angles) / 2))
-        extr_tmp = np.unique(extr_tmp)
-
-        extr_tmp_inverse = detect_peaks(relative_angles_inverse, mph=0.3 * np.max(relative_angles_inverse))
-        relative_angles_inverse = np.roll(relative_angles_inverse, int(len(relative_angles_inverse) / 2))
-        extr_tmp_inverse = np.append(
-            extr_tmp_inverse,
-            (detect_peaks(relative_angles_inverse, mph=0.3 * max(relative_angles_inverse))
-             - int(len(relative_angles_inverse) / 2)) % len(relative_angles_inverse),
-            axis=0,
-        )
-        extr_tmp_inverse = np.unique(extr_tmp_inverse)
-
-        extr = extr_tmp
-        extr_inverse = extr_tmp_inverse
-
-        relative_angles = normalized(relative_angles[:, np.newaxis], axis=0).ravel()
-
-        OFFSET_LOW  = len(relative_angles) / 10
-        OFFSET_HIGH = len(relative_angles) / 2.0
-        for comb in itertools.permutations(extr, 4):
-            if (
-                comb[0] > comb[1] > comb[2] > comb[3]
-                and OFFSET_LOW < comb[0] - comb[1] < OFFSET_HIGH
-                and OFFSET_LOW < comb[1] - comb[2] < OFFSET_HIGH
-                and OFFSET_LOW < comb[2] - comb[3] < OFFSET_HIGH
-                and OFFSET_LOW < comb[3] + len(relative_angles) - comb[0] < OFFSET_HIGH
-            ):
-                key = (comb[3], comb[2], comb[1], comb[0])
-                if (is_acceptable_comb(key, extr, len(relative_angles))
-                        and is_acceptable_comb(key, extr_inverse, len(relative_angles))):
-                    tmp_combs_final.append(key)
-
-        sigma += 1
-        if not tmp_combs_final:
-            print(f"  [corner-detect] sigma={sigma-1}: no combo — pos={len(extr)}, neg={len(extr_inverse)}")
+        ra = np.array(get_relative_angles(np.array(cnt_convert), sigma=sigma))
+        if np.max(ra) <= 0:
+            sigma += 1
             continue
 
-        best_fit = tmp_combs_final[compute_comp(tmp_combs_final, relative_angles, method="flat")]
+        # Collect positive peaks with double-roll trick
+        extr = detect_peaks(ra, mph=0.3 * np.max(ra))
+        ra_sh = np.roll(ra, int(n / 2))
+        extr = np.unique(np.append(
+            extr,
+            (detect_peaks(ra_sh, mph=0.3 * float(max(ra_sh))) - int(n / 2)) % n,
+        ))
 
-        offset = len(relative_angles) - best_fit[3] - 1
-        relative_angles  = np.roll(relative_angles, offset)
-        best_fit        += offset
-        extr             = (extr + offset) % len(relative_angles)
-        extr_inverse     = (extr_inverse + offset) % len(relative_angles)
+        if len(extr) < 4:
+            sigma += 1
+            continue
 
-        tmp_types_pieces = []
-        no_undefined = True
-        for seg in [[0, best_fit[0]], [best_fit[0], best_fit[1]],
-                    [best_fit[1], best_fit[2]], [best_fit[2], best_fit[3]]]:
+        # Limit to top-K by amplitude; C(K,4) << P(extr,4)
+        K = min(len(extr), 8)
+        top_k = np.sort(extr[np.argsort(ra[extr])[::-1]][:K])
+
+        for comb in itertools.combinations(top_k, 4):
+            c = np.array(comb)
+            spacings = np.array([(c[(i + 1) % 4] - c[i]) % n for i in range(4)])
+            if not (np.all(spacings > OFFSET_LOW) and np.all(spacings < OFFSET_HIGH)):
+                continue
+            score = _rectangle_score(cnt_pts[c])
+            if score < best_score:
+                best_score = score
+                best_corners = c
+
+        if best_score < RECT_THRESHOLD:
+            break   # already a tight rectangle, no need to keep smoothing
+
+        sigma += 1
+
+    return best_corners
+
+
+def my_find_corner_signature(cnt, green=False):
+    """Determine corner/edge positions by analyzing a piece contour."""
+    # --- A: Find corners via curvature peaks (top-K combinations search) ---
+    corner_indices = _find_corners_curvature_peaks(cnt, green)
+    if corner_indices is None:
+        print(f"[corner-detect] curvature peak search FAILED (contour len={len(cnt)})")
+        return None, None, None
+
+    n = len(cnt)
+
+    # --- B: Compute offset so last corner sits at index n-1 (matches downstream) ---
+    offset = n - int(corner_indices[3]) - 1
+    best_fit = corner_indices + offset
+
+    # --- C: Sigma loop for edge-type classification only (corners are fixed) ---
+    sigma = 5
+    max_sigma = 12 if green else 20
+    types_pieces = []
+    extr = extr_inverse = relative_angles = None
+
+    while sigma <= max_sigma:
+        print(f"Classify edges with sigma={sigma}...")
+
+        cnt_convert = [c[0] for c in cnt]
+        _ra = np.array(get_relative_angles(np.array(cnt_convert), sigma=sigma))
+        _ra_inv = -_ra.copy()
+
+        # double-roll trick to catch wrap-around peaks
+        extr_tmp = detect_peaks(_ra, mph=0.3 * np.max(_ra))
+        _ra_sh = np.roll(_ra, int(n / 2))
+        extr_tmp = np.unique(np.append(
+            extr_tmp,
+            (detect_peaks(_ra_sh, mph=0.3 * max(_ra_sh)) - int(n / 2)) % n,
+        ))
+        extr_tmp_inv = detect_peaks(_ra_inv, mph=0.3 * np.max(_ra_inv))
+        _ra_inv_sh = np.roll(_ra_inv, int(n / 2))
+        extr_tmp_inv = np.unique(np.append(
+            extr_tmp_inv,
+            (detect_peaks(_ra_inv_sh, mph=0.3 * max(_ra_inv_sh)) - int(n / 2)) % n,
+        ))
+
+        _ra_rolled = np.roll(_ra, offset)
+        extr         = (extr_tmp     + offset) % n
+        extr_inverse = (extr_tmp_inv + offset) % n
+        relative_angles = normalized(_ra_rolled[:, np.newaxis], axis=0).ravel()
+
+        segs = [
+            [0,                int(best_fit[0])],
+            [int(best_fit[0]), int(best_fit[1])],
+            [int(best_fit[1]), int(best_fit[2])],
+            [int(best_fit[2]), int(best_fit[3])],
+        ]
+        tmp_types, no_undefined = [], True
+        for seg in segs:
             pos_in = sorted(peaks_inside(seg, extr))
             neg_in = sorted(peaks_inside(seg, extr_inverse))
-            tmp_types_pieces.append(type_peak(pos_in, neg_in))
-            if tmp_types_pieces[-1] == TypeEdge.UNDEFINED:
+            t = type_peak(pos_in, neg_in)
+            tmp_types.append(t)
+            if t == TypeEdge.UNDEFINED:
                 no_undefined = False
-
-        types_pieces = tmp_types_pieces
+        types_pieces = tmp_types
+        sigma += 1
         if no_undefined:
             break
 
@@ -417,7 +484,9 @@ def my_find_corner_signature(cnt, green=False):
                 sa = relative_angles[seg[0]:seg[1]] if seg[1] > seg[0] else relative_angles[seg[0]:]
                 types_pieces[i] = _reclassify_undefined(t, pos_in, neg_in, segment_angles=sa)
 
-    best_fit_tmp = best_fit - offset
+    # corner_indices == best_fit - offset by construction
+    best_fit_tmp = corner_indices
+    edges = []
     for i in range(3):
         edges.append(cnt[best_fit_tmp[i]:best_fit_tmp[i + 1]])
     edges.append(np.concatenate((cnt[best_fit_tmp[3]:], cnt[:best_fit_tmp[0]]), axis=0))
