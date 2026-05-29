@@ -225,8 +225,11 @@ class Puzzle:
                 if ec is not None and source_R0 is not None and solved_R0 is not None:
                     solved_Ri = _border_R(p, np.array(ec, dtype=float))
                     if solved_Ri is not None:
-                        delta = solved_Ri - solved_R0
-                        delta = (delta + _math.pi) % (2 * _math.pi) - _math.pi
+                        delta_raw = solved_Ri - solved_R0
+                        delta_raw = (delta_raw + _math.pi) % (2 * _math.pi) - _math.pi
+                        # The solver only applies 90° steps → snap to nearest 90°
+                        # to remove pixel-level noise and keep borders exactly aligned.
+                        delta = round(delta_raw / (_math.pi / 2)) * (_math.pi / 2)
                         total = source_R0 + delta
                         total = (total + _math.pi) % (2 * _math.pi) - _math.pi
                         rotation_deg = round(
@@ -246,6 +249,31 @@ class Puzzle:
             with open(out_path, "w") as f:
                 json.dump(records, f, indent=2)
             self.log("Piece centers saved to", out_path)
+
+            # Re-export stick.png rotated to horizontal so the visualization is
+            # axis-aligned.  source_R0 is the angle that brings piece 0's borders
+            # to horizontal — applying it to the whole layout straightens everything.
+            if source_R0 is not None:
+                all_vis = np.concatenate([
+                    e.shape for p in self.pieces_ for e in p.edges_ if len(e.shape) > 0
+                ])
+                cx = (float(all_vis[:, 0].min()) + float(all_vis[:, 0].max())) / 2.0
+                cy = (float(all_vis[:, 1].min()) + float(all_vis[:, 1].max())) / 2.0
+                cos_r, sin_r = _math.cos(source_R0), _math.sin(source_R0)
+                for p in self.pieces_:
+                    for e in p.edges_:
+                        if len(e.shape) == 0:
+                            continue
+                        pts = e.shape.astype(float)
+                        dx, dy = pts[:, 0] - cx, pts[:, 1] - cy
+                        pts[:, 0] = cx + cos_r * dx - sin_r * dy
+                        pts[:, 1] = cy + sin_r * dx + cos_r * dy
+                        e.shape = np.round(pts).astype(int)
+                self.translate_puzzle()
+                self.export_pieces(
+                    os.path.join(os.environ["ZOLVER_TEMP_DIR"], "stick.png"),
+                    display=False,
+                )
 
     def get_bbox(self):
         bboxes = [p.get_bbox() for p in self.pieces_]
