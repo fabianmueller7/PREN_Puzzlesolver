@@ -88,9 +88,15 @@ class Puzzle:
                 if all_pts:
                     _start_ref_pts[id(p)] = (sc, np.concatenate(all_pts, axis=0))
 
-            # Per-edge shape snapshots for border-alignment rotation calculation.
+            # Per-edge shape and direction snapshots for border-alignment rotation calculation.
+            # Both must be captured together: the start-piece rotation loop (lines 120-133)
+            # mutates e.direction AND e.shape, so we need their pre-rotation state.
             _start_edge_shapes = {
                 id(p): {id(e): np.asarray(e.shape, dtype=float).copy() for e in p.edges_}
+                for p in self.pieces_
+            }
+            _start_edge_dirs = {
+                id(p): {id(e): e.direction for e in p.edges_}
                 for p in self.pieces_
             }
 
@@ -166,9 +172,10 @@ class Puzzle:
                 Directions.W:  _math.pi,
             }
 
-            def _border_R(piece, centroid_arr, edge_src_dict=None):
+            def _border_R(piece, centroid_arr, edge_src_dict=None, edge_dir_dict=None):
                 """Circular-mean outward-normal deviation for all BORDER edges.
                 Uses edge_src_dict shapes (source image) when provided, else e.shape (solved layout).
+                Uses edge_dir_dict direction labels when provided, else current e.direction.
                 Returns angle in radians, or None if no usable border edges."""
                 thetas = []
                 for e in piece.edges_:
@@ -185,7 +192,8 @@ class Puzzle:
                     dy = float(mid[1] - centroid_arr[1])
                     if abs(dx) < 1e-6 and abs(dy) < 1e-6:
                         continue
-                    t = _math.atan2(dy, dx) - _REQUIRED_OUTWARD.get(e.direction, 0.0)
+                    direction = edge_dir_dict.get(id(e), e.direction) if edge_dir_dict else e.direction
+                    t = _math.atan2(dy, dx) - _REQUIRED_OUTWARD.get(direction, 0.0)
                     thetas.append((t + _math.pi) % (2 * _math.pi) - _math.pi)
                 if not thetas:
                     return None
@@ -211,7 +219,11 @@ class Puzzle:
                     sc0 = src_pts_info[1].mean(axis=0)
                 else:
                     sc0 = np.array(_start_centers[id(start_p)], dtype=float)
-                source_R0 = _border_R(start_p, sc0, _start_edge_shapes.get(id(start_p), {}))
+                source_R0 = _border_R(
+                    start_p, sc0,
+                    _start_edge_shapes.get(id(start_p), {}),
+                    _start_edge_dirs.get(id(start_p), {}),
+                )
                 if ec0 is not None:
                     solved_R0 = _border_R(start_p, np.array(ec0, dtype=float))
 
