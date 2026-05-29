@@ -204,7 +204,13 @@ class Puzzle:
             source_R0 = solved_R0 = None
             if start_p is not None:
                 ec0 = ec_list[self.pieces_.index(start_p)]
-                sc0 = np.array(_start_centers[id(start_p)], dtype=float)
+                # Use edge-point mean (same method as ec_list/_piece_centroid) so that
+                # source_R0 and solved_R0 measure vectors from a consistent centroid type.
+                src_pts_info = _start_ref_pts.get(id(start_p))
+                if src_pts_info is not None:
+                    sc0 = src_pts_info[1].mean(axis=0)
+                else:
+                    sc0 = np.array(_start_centers[id(start_p)], dtype=float)
                 source_R0 = _border_R(start_p, sc0, _start_edge_shapes.get(id(start_p), {}))
                 if ec0 is not None:
                     solved_R0 = _border_R(start_p, np.array(ec0, dtype=float))
