@@ -16,6 +16,11 @@ CAMERA_RESOLUTION = (1920, 1080)  # capture resolution
 # Set ROTATION_SIGN = +1 if gripper_rotate(positive) means CCW.
 ROTATION_SIGN = -1
 
+# Fine-tune pickup position offset (robot mm).
+# Positive X = right, positive Y = down (robot coordinate convention).
+PICKUP_OFFSET_X =  1   # 1 mm to the right
+PICKUP_OFFSET_Y = -2   # 2 mm up
+
 
 CAPTURE_PATH        = "debug_output/capture.jpg"
 CAPTURE_RAW_PATH    = "debug_output/capture_raw.jpg"
@@ -174,7 +179,7 @@ def move_pieces(robot, pieces: list):
         print(f"  piece {idx}: ({x_s},{y_s}) → ({x_e},{y_e})  rotate {angle}°")
 
         # Pick up (double-tap: first tap seats the piece, second picks it up)
-        robot.go_to(x_s, y_s)
+        robot.go_to(x_s + PICKUP_OFFSET_X, y_s + PICKUP_OFFSET_Y)
         robot.gripper_down()
         robot.vacuum_pump_on()
         robot.gripper_on()
