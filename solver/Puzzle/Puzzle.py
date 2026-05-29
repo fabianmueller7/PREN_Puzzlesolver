@@ -88,6 +88,12 @@ class Puzzle:
                 if all_pts:
                     _start_ref_pts[id(p)] = (sc, np.concatenate(all_pts, axis=0))
 
+            # Per-edge shape snapshots for border-alignment rotation calculation.
+            _start_edge_shapes = {
+                id(p): {id(e): np.asarray(e.shape, dtype=float).copy() for e in p.edges_}
+                for p in self.pieces_
+            }
+
         connected_pieces = []
         border_pieces = self.border_pieces.copy()
         non_border_pieces = self.non_border_pieces.copy()
@@ -164,48 +170,75 @@ class Puzzle:
                 else:
                     robot_end = list(robot_start)
 
-                # Compute rotation_deg from the actual geometric transformation.
-                # Strategy: for every edge point that is far enough from the centroid,
-                # measure the angle of (pt - centroid) before and after solving and
-                # accumulate the per-point deltas as unit vectors on the unit circle.
-                # Averaging the unit vectors (circular mean) is robust against outliers
-                # and works even when individual points are close to the centroid.
+                # Compute rotation_deg by aligning each border edge's outward normal
+                # to the required direction in the target box:
+                #   N → up  (−π/2),  S → down (+π/2),
+                #   E → right (0),   W → left  (π)
+                # Actual outward direction = vector from centroid to edge midpoint in
+                # the source image.  rotation = actual − required (CCW-positive).
+                import math as _math
                 rotation_deg = 0
-                if id(p) in _start_ref_pts:
-                    import math as _math
-                    sc_orig, pts_orig = _start_ref_pts[id(p)]
-                    centroid_final = np.array(ec, dtype=float) if ec is not None else np.array(sc, dtype=float)
-                    sc_orig_arr = np.array(sc_orig, dtype=float)
 
-                    # Gather all edge points in their final (post-solve) positions
+                _REQUIRED_OUTWARD = {
+                    Directions.N: -_math.pi / 2,
+                    Directions.S:  _math.pi / 2,
+                    Directions.E:  0.0,
+                    Directions.W:  _math.pi,
+                }
+
+                if id(p) in _start_ref_pts:
+                    _, pts_orig = _start_ref_pts[id(p)]
+                    sc_orig_arr = pts_orig.mean(axis=0)  # edge-point mean centroid
+                else:
+                    sc_orig_arr = np.array(sc, dtype=float)
+
+                edge_shapes_p = _start_edge_shapes.get(id(p), {})
+                border_thetas = []
+                for e in p.edges_:
+                    if e.type != TypeEdge.BORDER:
+                        continue
+                    src_pts = edge_shapes_p.get(id(e))
+                    if src_pts is None or len(src_pts) < 2:
+                        continue
+                    mid = src_pts.mean(axis=0)
+                    dx = float(mid[0] - sc_orig_arr[0])
+                    dy = float(mid[1] - sc_orig_arr[1])
+                    if abs(dx) < 1e-6 and abs(dy) < 1e-6:
+                        continue
+                    actual_outward  = _math.atan2(dy, dx)
+                    required_outward = _REQUIRED_OUTWARD.get(e.direction, 0.0)
+                    theta = actual_outward - required_outward
+                    theta = (theta + _math.pi) % (2 * _math.pi) - _math.pi
+                    border_thetas.append(theta)
+
+                if border_thetas:
+                    mean_sin = sum(_math.sin(t) for t in border_thetas) / len(border_thetas)
+                    mean_cos = sum(_math.cos(t) for t in border_thetas) / len(border_thetas)
+                    rotation_deg = round(
+                        _math.degrees(_math.atan2(mean_sin, mean_cos)) + config.PUZZLE_TARGET_ROTATION_DEG, 1
+                    )
+                elif id(p) in _start_ref_pts:
+                    # Fallback for CENTER pieces (no border edges): pixel-based measurement.
+                    _, pts_orig = _start_ref_pts[id(p)]
+                    centroid_final = np.array(ec, dtype=float) if ec is not None else np.array(sc, dtype=float)
                     final_pts_list = [e.shape for e in p.edges_ if len(e.shape) > 0]
                     if final_pts_list:
-                        pts_final = np.concatenate(final_pts_list, axis=0)   # (N, 2)
-
-                        # Vectors from centroid before solving
-                        vecs_before = pts_orig - sc_orig_arr          # (N, 2)
-                        # Vectors from centroid after solving
-                        vecs_after  = pts_final - centroid_final       # (N, 2)
-
-                        # Keep only points far enough from centroid (>= 3 px) in BOTH states
+                        pts_final = np.concatenate(final_pts_list, axis=0)
+                        vecs_before = pts_orig - sc_orig_arr
+                        vecs_after  = pts_final - centroid_final
                         dist_before = np.linalg.norm(vecs_before, axis=1)
                         dist_after  = np.linalg.norm(vecs_after,  axis=1)
                         mask = (dist_before >= 3.0) & (dist_after >= 3.0)
-
                         if mask.sum() > 0:
-                            vb = vecs_before[mask]
-                            va = vecs_after[mask]
-                            # Per-point angle delta (in radians), then circular mean.
-                            # Negate y to convert from screen coords (y-down) to math
-                            # coords (y-up / CCW-positive), matching angle_between().
+                            vb, va = vecs_before[mask], vecs_after[mask]
                             angles_b = np.arctan2(-vb[:, 1], vb[:, 0])
                             angles_a = np.arctan2(-va[:, 1], va[:, 0])
                             deltas   = angles_a - angles_b
-                            # Circular mean: average sin/cos to handle wrap-around
-                            mean_sin = np.mean(np.sin(deltas))
-                            mean_cos = np.mean(np.cos(deltas))
-                            delta_rad = _math.atan2(mean_sin, mean_cos)
-                            rotation_deg = round(_math.degrees(delta_rad) + config.PUZZLE_TARGET_ROTATION_DEG, 1)
+                            mean_sin = float(np.mean(np.sin(deltas)))
+                            mean_cos = float(np.mean(np.cos(deltas)))
+                            rotation_deg = round(
+                                _math.degrees(_math.atan2(mean_sin, mean_cos)) + config.PUZZLE_TARGET_ROTATION_DEG, 1
+                            )
 
                 records.append({
                     "piece_index": i,
