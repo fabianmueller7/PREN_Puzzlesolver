@@ -220,17 +220,14 @@ class Extractor:
 
         Returns True and sets self.img_bw when it finds a plausible piece mask.
         """
-        print("[white_bg] attempting visual white-background detection...")
+        print("[white_bg] attempting visual dark-piece detection...")
 
-        hsv = cv2.cvtColor(self.img, cv2.COLOR_BGR2HSV)
+        gray = cv2.cvtColor(self.img, cv2.COLOR_BGR2GRAY)
+        dark_pct = 100.0 * np.sum(gray < 80) / gray.size
+        print(f"[white_bg] dark pixel coverage (V<80): {dark_pct:.1f}%")
 
-        # White: low saturation, high value
-        white_mask = cv2.inRange(hsv, (0, 0, 170), (180, 50, 255))
-        white_pct = 100.0 * cv2.countNonZero(white_mask) / white_mask.size
-        print(f"[white_bg] white pixel coverage: {white_pct:.1f}%")
-
-        # Invert → non-white = piece candidate regions
-        piece_mask = cv2.bitwise_not(white_mask)
+        # Pieces are very dark/black against a bright background
+        _, piece_mask = cv2.threshold(gray, 80, 255, cv2.THRESH_BINARY_INV)
 
         # Remove small salt-and-pepper noise
         k_open = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
