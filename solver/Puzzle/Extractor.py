@@ -220,10 +220,14 @@ class Extractor:
 
         Returns True and sets self.img_bw when it finds a plausible piece mask.
         """
+        print("[white_bg] attempting visual white-background detection...")
+
         hsv = cv2.cvtColor(self.img, cv2.COLOR_BGR2HSV)
 
         # White: low saturation, high value
         white_mask = cv2.inRange(hsv, (0, 0, 170), (180, 50, 255))
+        white_pct = 100.0 * cv2.countNonZero(white_mask) / white_mask.size
+        print(f"[white_bg] white pixel coverage: {white_pct:.1f}%")
 
         # Invert → non-white = piece candidate regions
         piece_mask = cv2.bitwise_not(white_mask)
@@ -238,6 +242,7 @@ class Extractor:
 
         contours, _ = cv2.findContours(piece_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         if not contours:
+            print("[white_bg] FAILED — no contours after morphology")
             return False
 
         areas = [cv2.contourArea(c) for c in contours]
@@ -245,9 +250,10 @@ class Extractor:
         good = [c for c, a in zip(contours, areas) if a >= max_area * 0.05]
 
         n = len(good)
-        self.log(f"white_bg_threshold: {n} piece candidates found")
+        print(f"[white_bg] {n} piece candidates (need {min_pieces}–{max_pieces})")
 
         if not (min_pieces <= n <= max_pieces):
+            print(f"[white_bg] FAILED — piece count {n} outside [{min_pieces}, {max_pieces}]")
             return False
 
         filled = np.zeros_like(piece_mask)
@@ -255,6 +261,7 @@ class Extractor:
 
         self.img_bw = filled
         self._save_temp("white_bg_filled.png", self.img_bw)
+        print(f"[white_bg] SUCCESS — {n} pieces detected visually")
         return True
 
     # ------------------------------------------------------------------
