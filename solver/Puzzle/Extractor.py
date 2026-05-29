@@ -74,11 +74,13 @@ class Extractor:
         self.log(">>> START preprocessing")
 
         used_simple = False
+        used_visual = False
         backup_bw = None
 
         if not self.green_:
-            used_simple = self.white_bg_threshold(min_pieces=2, max_pieces=10)
-            if used_simple:
+            used_visual = self.white_bg_threshold(min_pieces=2, max_pieces=10)
+            used_simple = used_visual
+            if used_visual:
                 self.log("Using white-background segmentation.")
             else:
                 used_simple = self.simple_piece_threshold(min_pieces=2, max_pieces=10)
@@ -139,6 +141,15 @@ class Extractor:
             viewer=self.viewer,
             green=self.green_,
         )
+
+        if used_visual and puzzle_pieces:
+            self.log("[VISUAL CENTER] Centers detected via white-background method:")
+            for i, p in enumerate(puzzle_pieces):
+                if p.img_centroid is not None:
+                    self.log(f"  piece {i}: cx={p.img_centroid[0]:.1f} px, cy={p.img_centroid[1]:.1f} px")
+                else:
+                    self.log(f"  piece {i}: centroid not available")
+
         return puzzle_pieces
 
     # ------------------------------------------------------------------
