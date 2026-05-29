@@ -18,8 +18,8 @@ ROTATION_SIGN = -1
 
 # Fine-tune pickup position offset (robot mm).
 # Positive X = right, positive Y = down (robot coordinate convention).
-PICKUP_OFFSET_X =  1   # 1 mm to the right
-PICKUP_OFFSET_Y = -2   # 2 mm up
+PICKUP_OFFSET_X =  12   # 1 mm to the right
+PICKUP_OFFSET_Y = -24   # 2 mm up
 
 
 CAPTURE_PATH        = "debug_output/capture.jpg"
