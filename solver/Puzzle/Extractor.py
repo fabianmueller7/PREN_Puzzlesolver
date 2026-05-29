@@ -77,8 +77,12 @@ class Extractor:
         backup_bw = None
 
         if not self.green_:
-            used_simple = self.simple_piece_threshold(min_pieces=2, max_pieces=10)
-            self.log("Using simple threshold segmentation (no watershed).")
+            used_simple = self.white_bg_threshold(min_pieces=2, max_pieces=10)
+            if used_simple:
+                self.log("Using white-background segmentation.")
+            else:
+                used_simple = self.simple_piece_threshold(min_pieces=2, max_pieces=10)
+                self.log("Using simple threshold segmentation (no watershed).")
 
         else:
             # green-screen: we already have a fairly clean mask, just clean & separate
@@ -191,6 +195,56 @@ class Extractor:
             self._save_temp("fallback_bw.png", bw)
 
         return bw
+
+    # ------------------------------------------------------------------
+    # White-background fast-path (production)
+    # ------------------------------------------------------------------
+
+    def white_bg_threshold(self, min_pieces=2, max_pieces=200):
+        """Detect pieces by finding non-white regions.
+
+        Works well in production where the gamefield background is white and
+        the LED illuminates it strongly.  Pieces appear as dark/coloured blobs
+        against the bright white surface.
+
+        Returns True and sets self.img_bw when it finds a plausible piece mask.
+        """
+        hsv = cv2.cvtColor(self.img, cv2.COLOR_BGR2HSV)
+
+        # White: low saturation, high value
+        white_mask = cv2.inRange(hsv, (0, 0, 170), (180, 50, 255))
+
+        # Invert → non-white = piece candidate regions
+        piece_mask = cv2.bitwise_not(white_mask)
+
+        # Remove small salt-and-pepper noise
+        k_open = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
+        piece_mask = cv2.morphologyEx(piece_mask, cv2.MORPH_OPEN, k_open, iterations=1)
+
+        # Close small gaps inside pieces (tabs, text, texture)
+        k_close = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (15, 15))
+        piece_mask = cv2.morphologyEx(piece_mask, cv2.MORPH_CLOSE, k_close, iterations=2)
+
+        contours, _ = cv2.findContours(piece_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if not contours:
+            return False
+
+        areas = [cv2.contourArea(c) for c in contours]
+        max_area = max(areas)
+        good = [c for c, a in zip(contours, areas) if a >= max_area * 0.05]
+
+        n = len(good)
+        self.log(f"white_bg_threshold: {n} piece candidates found")
+
+        if not (min_pieces <= n <= max_pieces):
+            return False
+
+        filled = np.zeros_like(piece_mask)
+        cv2.drawContours(filled, good, -1, 255, thickness=cv2.FILLED)
+
+        self.img_bw = filled
+        self._save_temp("white_bg_filled.png", self.img_bw)
+        return True
 
     # ------------------------------------------------------------------
     # Simple threshold fast-path
