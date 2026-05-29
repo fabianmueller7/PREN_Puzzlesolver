@@ -57,14 +57,16 @@ PUZZLE_TARGET_ROTATION_DEG = 0.0
 def grid_to_robot(ge, gn, grid_W, grid_H):
     """Map solved-puzzle grid coordinate (ge=east, gn=north) to robot mm.
 
-    Corner pieces land exactly at the 4 physical target-field corners:
-      SW (gn=0, ge=0)       → TARGET_BL
-      SE (gn=0, ge=W-1)     → TARGET_BR
-      NW (gn=H-1, ge=0)     → TARGET_TL
-      NE (gn=H-1, ge=W-1)   → TARGET_TR
+    Places each piece's centre at the centre of its grid cell inside the target
+    field.  The field is divided into grid_W × grid_H equal cells; the outer
+    edges of the outermost cells coincide with TARGET_TL/TR/BL/BR.
+
+    Cell-centre fractions:
+      u = (ge + 0.5) / grid_W   — 0 = left edge, 1 = right edge
+      v = 1 - (gn + 0.5) / grid_H — 0 = top edge, 1 = bottom edge
     """
-    u = ge / (grid_W - 1) if grid_W > 1 else 0.5
-    v = 1.0 - gn / (grid_H - 1) if grid_H > 1 else 0.5
+    u = (ge + 0.5) / grid_W
+    v = 1.0 - (gn + 0.5) / grid_H
     tl, tr, bl, br = TARGET_TL, TARGET_TR, TARGET_BL, TARGET_BR
     rx = (1-u)*(1-v)*tl[0] + u*(1-v)*tr[0] + (1-u)*v*bl[0] + u*v*br[0]
     ry = (1-u)*(1-v)*tl[1] + u*(1-v)*tr[1] + (1-u)*v*bl[1] + u*v*br[1]
