@@ -157,88 +157,81 @@ class Puzzle:
             grid_H = (max(c[0] for c in coords) + 1) if coords else 1  # north axis
             grid_W = (max(c[1] for c in coords) + 1) if coords else 1  # east axis
 
+            import math as _math
+
+            _REQUIRED_OUTWARD = {
+                Directions.N: -_math.pi / 2,
+                Directions.S:  _math.pi / 2,
+                Directions.E:  0.0,
+                Directions.W:  _math.pi,
+            }
+
+            def _border_R(piece, centroid_arr, edge_src_dict=None):
+                """Circular-mean outward-normal deviation for all BORDER edges.
+                Uses edge_src_dict shapes (source image) when provided, else e.shape (solved layout).
+                Returns angle in radians, or None if no usable border edges."""
+                thetas = []
+                for e in piece.edges_:
+                    if e.type != TypeEdge.BORDER:
+                        continue
+                    if edge_src_dict is not None:
+                        pts = edge_src_dict.get(id(e))
+                    else:
+                        pts = np.asarray(e.shape, dtype=float) if len(e.shape) >= 2 else None
+                    if pts is None or len(pts) < 2:
+                        continue
+                    mid = np.asarray(pts, dtype=float).mean(axis=0)
+                    dx = float(mid[0] - centroid_arr[0])
+                    dy = float(mid[1] - centroid_arr[1])
+                    if abs(dx) < 1e-6 and abs(dy) < 1e-6:
+                        continue
+                    t = _math.atan2(dy, dx) - _REQUIRED_OUTWARD.get(e.direction, 0.0)
+                    thetas.append((t + _math.pi) % (2 * _math.pi) - _math.pi)
+                if not thetas:
+                    return None
+                ms = sum(_math.sin(t) for t in thetas) / len(thetas)
+                mc = sum(_math.cos(t) for t in thetas) / len(thetas)
+                return _math.atan2(ms, mc)
+
+            # Piece 0 = start piece (SW corner, coord (0,0)).
+            # source_R0: rotation that aligns piece 0's borders with the target box
+            #            (measured from source image border edge midpoints).
+            # solved_R0: same metric measured in the solved layout (reference baseline).
+            # rotation[i] = source_R0 + (solved_R[i] - solved_R0)
+            start_p = next(
+                (p for p in self.pieces_ if getattr(p, "coord", None) == (0, 0)), None
+            )
+            source_R0 = solved_R0 = None
+            if start_p is not None:
+                ec0 = ec_list[self.pieces_.index(start_p)]
+                sc0 = np.array(_start_centers[id(start_p)], dtype=float)
+                source_R0 = _border_R(start_p, sc0, _start_edge_shapes.get(id(start_p), {}))
+                if ec0 is not None:
+                    solved_R0 = _border_R(start_p, np.array(ec0, dtype=float))
+
             for i, p in enumerate(self.pieces_):
                 sc = _start_centers[id(p)]
                 ec = ec_list[i]
                 robot_start = config.pixel_to_robot(sc[0], sc[1])
 
                 # Map solved grid coordinate → target field robot mm.
-                # Corner pieces land exactly at the 4 physical target corners.
                 if hasattr(p, "coord"):
                     gn, ge = p.coord   # (north, east)
                     robot_end = list(config.grid_to_robot(ge, gn, grid_W, grid_H))
                 else:
                     robot_end = list(robot_start)
 
-                # Compute rotation_deg by aligning each border edge's outward normal
-                # to the required direction in the target box:
-                #   N → up  (−π/2),  S → down (+π/2),
-                #   E → right (0),   W → left  (π)
-                # Actual outward direction = vector from centroid to edge midpoint in
-                # the source image.  rotation = actual − required (CCW-positive).
-                import math as _math
-                rotation_deg = 0
-
-                _REQUIRED_OUTWARD = {
-                    Directions.N: -_math.pi / 2,
-                    Directions.S:  _math.pi / 2,
-                    Directions.E:  0.0,
-                    Directions.W:  _math.pi,
-                }
-
-                if id(p) in _start_ref_pts:
-                    _, pts_orig = _start_ref_pts[id(p)]
-                    sc_orig_arr = pts_orig.mean(axis=0)  # edge-point mean centroid
-                else:
-                    sc_orig_arr = np.array(sc, dtype=float)
-
-                edge_shapes_p = _start_edge_shapes.get(id(p), {})
-                border_thetas = []
-                for e in p.edges_:
-                    if e.type != TypeEdge.BORDER:
-                        continue
-                    src_pts = edge_shapes_p.get(id(e))
-                    if src_pts is None or len(src_pts) < 2:
-                        continue
-                    mid = src_pts.mean(axis=0)
-                    dx = float(mid[0] - sc_orig_arr[0])
-                    dy = float(mid[1] - sc_orig_arr[1])
-                    if abs(dx) < 1e-6 and abs(dy) < 1e-6:
-                        continue
-                    actual_outward  = _math.atan2(dy, dx)
-                    required_outward = _REQUIRED_OUTWARD.get(e.direction, 0.0)
-                    theta = actual_outward - required_outward
-                    theta = (theta + _math.pi) % (2 * _math.pi) - _math.pi
-                    border_thetas.append(theta)
-
-                if border_thetas:
-                    mean_sin = sum(_math.sin(t) for t in border_thetas) / len(border_thetas)
-                    mean_cos = sum(_math.cos(t) for t in border_thetas) / len(border_thetas)
-                    rotation_deg = round(
-                        _math.degrees(_math.atan2(mean_sin, mean_cos)) + config.PUZZLE_TARGET_ROTATION_DEG, 1
-                    )
-                elif id(p) in _start_ref_pts:
-                    # Fallback for CENTER pieces (no border edges): pixel-based measurement.
-                    _, pts_orig = _start_ref_pts[id(p)]
-                    centroid_final = np.array(ec, dtype=float) if ec is not None else np.array(sc, dtype=float)
-                    final_pts_list = [e.shape for e in p.edges_ if len(e.shape) > 0]
-                    if final_pts_list:
-                        pts_final = np.concatenate(final_pts_list, axis=0)
-                        vecs_before = pts_orig - sc_orig_arr
-                        vecs_after  = pts_final - centroid_final
-                        dist_before = np.linalg.norm(vecs_before, axis=1)
-                        dist_after  = np.linalg.norm(vecs_after,  axis=1)
-                        mask = (dist_before >= 3.0) & (dist_after >= 3.0)
-                        if mask.sum() > 0:
-                            vb, va = vecs_before[mask], vecs_after[mask]
-                            angles_b = np.arctan2(-vb[:, 1], vb[:, 0])
-                            angles_a = np.arctan2(-va[:, 1], va[:, 0])
-                            deltas   = angles_a - angles_b
-                            mean_sin = float(np.mean(np.sin(deltas)))
-                            mean_cos = float(np.mean(np.cos(deltas)))
-                            rotation_deg = round(
-                                _math.degrees(_math.atan2(mean_sin, mean_cos)) + config.PUZZLE_TARGET_ROTATION_DEG, 1
-                            )
+                rotation_deg = 0.0
+                if ec is not None and source_R0 is not None and solved_R0 is not None:
+                    solved_Ri = _border_R(p, np.array(ec, dtype=float))
+                    if solved_Ri is not None:
+                        delta = solved_Ri - solved_R0
+                        delta = (delta + _math.pi) % (2 * _math.pi) - _math.pi
+                        total = source_R0 + delta
+                        total = (total + _math.pi) % (2 * _math.pi) - _math.pi
+                        rotation_deg = round(
+                            _math.degrees(total) + config.PUZZLE_TARGET_ROTATION_DEG, 1
+                        )
 
                 records.append({
                     "piece_index": i,
