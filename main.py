@@ -181,6 +181,8 @@ def move_pieces(robot, pieces: list):
         # Pick up (double-tap: first tap seats the piece, second picks it up)
         robot.go_to(x_s + PICKUP_OFFSET_X, y_s + PICKUP_OFFSET_Y)
         robot.gripper_down()
+        robot.gripper_up()
+        robot.gripper_down()
         robot.vacuum_pump_on()
         robot.gripper_on()
         robot.gripper_up()
