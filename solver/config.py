@@ -3,7 +3,7 @@ DEBUG_SHOW_DIAGRAMS = 0  # Shows matplotlib diagrams interactively (requires DEB
 DEBUG_ALT_SOLVER = 0     # Saves debug images for the alternative solver to debug_output/
 DEBUG_PIECE_CENTERS = 1  # Writes piece_centers.json to debug_output/ with each piece's start and end center point (0/0 is top left)
 
-EDGE_OFFSET = 3  # pixels (6 pixels ≈ 1mm) — shifts each edge outward to show the manufacturing tolerance band in debug output
+EDGE_OFFSET = 1  # pixels (6 pixels ≈ 1mm) — shifts each edge outward to show the manufacturing tolerance band in debug output
 
 # Affine calibration: maps warped-image pixel (px, py) → robot mm (rx, ry).
 # Both systems: (0,0) = top-left, X increases right, Y increases down.
@@ -49,9 +49,30 @@ TARGET_BL = (251.0, 136.75)
 TARGET_BR = ( 60.0, 136.25)
 
 
+# Global rotation offset added to every piece's rotation_deg (degrees, CCW-positive).
+# 0 = no correction. Tune in 90° steps if the puzzle lands in the wrong orientation.
+PUZZLE_TARGET_ROTATION_DEG = 0.0
+
+
+def grid_to_robot(ge, gn, grid_W, grid_H):
+    """Map solved-puzzle grid coordinate (ge=east, gn=north) to robot mm.
+
+    Corner pieces land exactly at the 4 physical target-field corners:
+      SW (gn=0, ge=0)       → TARGET_BL
+      SE (gn=0, ge=W-1)     → TARGET_BR
+      NW (gn=H-1, ge=0)     → TARGET_TL
+      NE (gn=H-1, ge=W-1)   → TARGET_TR
+    """
+    u = ge / (grid_W - 1) if grid_W > 1 else 0.5
+    v = 1.0 - gn / (grid_H - 1) if grid_H > 1 else 0.5
+    tl, tr, bl, br = TARGET_TL, TARGET_TR, TARGET_BL, TARGET_BR
+    rx = (1-u)*(1-v)*tl[0] + u*(1-v)*tr[0] + (1-u)*v*bl[0] + u*v*br[0]
+    ry = (1-u)*(1-v)*tl[1] + u*(1-v)*tr[1] + (1-u)*v*bl[1] + u*v*br[1]
+    return round(rx), round(ry)
+
+
 def layout_to_robot(col, row, max_col, max_row):
-    """Map a solved-layout pixel (col, row) to robot mm via bilinear interpolation
-    over the 4 physical target-field corners."""
+    """Fallback: map solved-layout pixel centroid to robot mm (pixel-based, less accurate)."""
     u = col / max_col if max_col > 0 else 0.5
     v = row / max_row if max_row > 0 else 0.5
     tl, tr, bl, br = TARGET_TL, TARGET_TR, TARGET_BL, TARGET_BR

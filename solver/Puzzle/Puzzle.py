@@ -145,24 +145,22 @@ class Puzzle:
 
             ec_list = [self._piece_centroid(p) for p in self.pieces_]
 
-            # Solved layout bounding box — after translate_puzzle() minimum is (0,0).
-            all_solved_pts = np.concatenate(
-                [e.shape for p in self.pieces_ for e in p.edges_ if len(e.shape) > 0]
-            )
-            layout_max_col = float(all_solved_pts[:, 0].max())
-            layout_max_row = float(all_solved_pts[:, 1].max())
+            # Grid dimensions from piece coords: p.coord = (gn, ge) where gn=north, ge=east.
+            # Start piece (SW corner) is at (0, 0); puzzle grows N and E from there.
+            coords = [p.coord for p in self.pieces_ if hasattr(p, "coord")]
+            grid_H = (max(c[0] for c in coords) + 1) if coords else 1  # north axis
+            grid_W = (max(c[1] for c in coords) + 1) if coords else 1  # east axis
 
             for i, p in enumerate(self.pieces_):
                 sc = _start_centers[id(p)]
                 ec = ec_list[i]
                 robot_start = config.pixel_to_robot(sc[0], sc[1])
 
-                # Map solved layout pixel → target field robot mm via bilinear
-                # interpolation over the 4 measured physical target-field corners.
-                if ec is not None:
-                    robot_end = list(config.layout_to_robot(
-                        ec[0], ec[1], layout_max_col, layout_max_row
-                    ))
+                # Map solved grid coordinate → target field robot mm.
+                # Corner pieces land exactly at the 4 physical target corners.
+                if hasattr(p, "coord"):
+                    gn, ge = p.coord   # (north, east)
+                    robot_end = list(config.grid_to_robot(ge, gn, grid_W, grid_H))
                 else:
                     robot_end = list(robot_start)
 
@@ -207,7 +205,7 @@ class Puzzle:
                             mean_sin = np.mean(np.sin(deltas))
                             mean_cos = np.mean(np.cos(deltas))
                             delta_rad = _math.atan2(mean_sin, mean_cos)
-                            rotation_deg = round(_math.degrees(delta_rad), 1)
+                            rotation_deg = round(_math.degrees(delta_rad) + config.PUZZLE_TARGET_ROTATION_DEG, 1)
 
                 records.append({
                     "piece_index": i,
