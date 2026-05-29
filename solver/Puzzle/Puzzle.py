@@ -145,32 +145,24 @@ class Puzzle:
 
             ec_list = [self._piece_centroid(p) for p in self.pieces_]
 
-            # Solved layout centre = midpoint of the overall bounding box of all
-            # shape points.  After translate_puzzle() the minimum is exactly (0,0),
-            # so centre = max/2.  This is independent of where piece centroids cluster
-            # and maps correctly to CAL_CENTRE_X/Y (field centre in robot mm).
+            # Solved layout bounding box — after translate_puzzle() minimum is (0,0).
             all_solved_pts = np.concatenate(
                 [e.shape for p in self.pieces_ for e in p.edges_ if len(e.shape) > 0]
             )
-            layout_cx = float(all_solved_pts[:, 0].max()) / 2.0   # col axis
-            layout_cy = float(all_solved_pts[:, 1].max()) / 2.0   # row axis
+            layout_max_col = float(all_solved_pts[:, 0].max())
+            layout_max_row = float(all_solved_pts[:, 1].max())
 
             for i, p in enumerate(self.pieces_):
                 sc = _start_centers[id(p)]
                 ec = ec_list[i]
                 robot_start = config.pixel_to_robot(sc[0], sc[1])
 
-                # Map solved layout pixel → robot mm.
-                # Full affine transform (all four CAL_M terms) + CAL_SCALE correction,
-                # consistent with pixel_to_robot() used for start positions.
+                # Map solved layout pixel → target field robot mm via bilinear
+                # interpolation over the 4 measured physical target-field corners.
                 if ec is not None:
-                    dx = ec[0] - layout_cx
-                    dy = ec[1] - layout_cy
-                    rx_end = (config.CAL_M[0][0] * dx + config.CAL_M[0][1] * dy) * config.CAL_SCALE_X
-                    ry_end = (config.CAL_M[1][0] * dx + config.CAL_M[1][1] * dy) * config.CAL_SCALE_Y
-                    rx_end = config.CAL_CENTRE_X + rx_end
-                    ry_end = config.CAL_CENTRE_Y + ry_end
-                    robot_end = [round(rx_end), round(ry_end)]
+                    robot_end = list(config.layout_to_robot(
+                        ec[0], ec[1], layout_max_col, layout_max_row
+                    ))
                 else:
                     robot_end = list(robot_start)
 

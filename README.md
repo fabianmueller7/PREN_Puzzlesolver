@@ -67,6 +67,30 @@ using at least two edges. The more edges we have to check how likely is the piec
 Zolver is likely to make an error. Zolver will always try to fill the empty space with the highest
 number of edges already filled.
 
+## Robot Calibration
+
+### Aufnahmefeld (source field — where pieces are picked up)
+
+Affine calibration mapping camera image pixels to robot mm (`solver/config.py`):
+
+| Ecke         | Pixel (px, py) | Robot (X mm, Y mm) |
+|---|---|---|
+| Oben links   | (0, 0)         | (303.0, 175.0)     |
+| Oben rechts  | (905, 0)       | (6.5, 176.0)       |
+| Unten links  | (0, 647)       | (303.0, 386.0)     |
+| Unten rechts | (905, 647)     | (3.0, 383.0)       |
+
+### Zielfeld (target field — where the solved puzzle is placed)
+
+Physical corner measurements in robot mm (`solver/config.py`):
+
+| Ecke         | Robot (X mm, Y mm) |
+|---|---|
+| Oben links   | (251.0, 9.0)       |
+| Oben rechts  | (62.0, 9.0)        |
+| Unten links  | (251.0, 136.75)    |
+| Unten rechts | (60.0, 136.25)     |
+
 ## Authors
 SCIA 2018 - EPITA
 

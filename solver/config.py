@@ -37,6 +37,28 @@ def pixel_to_robot(pixel_x, pixel_y):
     ry = CAL_CENTRE_Y + (ry - CAL_CENTRE_Y) * CAL_SCALE_Y
     return round(rx), round(ry)
 
+
+# Target field corners in robot mm (where the solved puzzle is placed).
+#   Oben links   (TL): (251.0,   9.0)
+#   Oben rechts  (TR): ( 62.0,   9.0)
+#   Unten links  (BL): (251.0, 136.75)
+#   Unten rechts (BR): ( 60.0, 136.25)
+TARGET_TL = (251.0,   9.0)
+TARGET_TR = ( 62.0,   9.0)
+TARGET_BL = (251.0, 136.75)
+TARGET_BR = ( 60.0, 136.25)
+
+
+def layout_to_robot(col, row, max_col, max_row):
+    """Map a solved-layout pixel (col, row) to robot mm via bilinear interpolation
+    over the 4 physical target-field corners."""
+    u = col / max_col if max_col > 0 else 0.5
+    v = row / max_row if max_row > 0 else 0.5
+    tl, tr, bl, br = TARGET_TL, TARGET_TR, TARGET_BL, TARGET_BR
+    rx = (1-u)*(1-v)*tl[0] + u*(1-v)*tr[0] + (1-u)*v*bl[0] + u*v*br[0]
+    ry = (1-u)*(1-v)*tl[1] + u*(1-v)*tr[1] + (1-u)*v*bl[1] + u*v*br[1]
+    return round(rx), round(ry)
+
 # A4 landscape at 150 DPI
 DEBUG_OUTPUT_W = 1782
 DEBUG_OUTPUT_H = 1260
