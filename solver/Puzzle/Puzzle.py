@@ -197,32 +197,83 @@ class Puzzle:
                 mc = sum(_math.cos(t) for t in thetas) / len(thetas)
                 return _math.atan2(ms, mc)
 
-            def _piece_rotation(piece, src_centroid, cur_centroid, src_edge_shapes):
-                """Circular-mean CCW rotation (rad) of piece from source to current layout.
-                Compares border-edge midpoint vectors relative to centroid."""
-                deltas = []
-                for e in piece.edges_:
-                    if e.type != TypeEdge.BORDER:
-                        continue
-                    src_pts = src_edge_shapes.get(id(e))
-                    if src_pts is None or len(src_pts) < 2:
-                        continue
-                    cur_pts = np.asarray(e.shape, dtype=float)
-                    if len(cur_pts) < 2:
-                        continue
-                    sv = src_pts.mean(axis=0) - src_centroid
-                    cv = cur_pts.mean(axis=0) - cur_centroid
-                    if np.linalg.norm(sv) < 1e-6 or np.linalg.norm(cv) < 1e-6:
-                        continue
-                    deltas.append(_math.atan2(
-                        float(sv[0] * cv[1] - sv[1] * cv[0]),
-                        float(sv[0] * cv[0] + sv[1] * cv[1]),
-                    ))
-                if not deltas:
+            def _estimate_rotation_by_shape_match(src_pts, src_centroid, cur_pts, cur_centroid):
+                """
+                Brute-force rotation search (coarse 2°, fine 0.25°): find the CCW angle
+                (standard-math convention, positive=CCW) that best maps the centred source
+                edge cloud onto the centred solved edge cloud via a distance-transform score.
+                Returns degrees, or None if insufficient data.
+                Adapted from PuzzleSimulator/tests/run_robot_solver.py.
+                """
+                import cv2 as _cv2
+
+                if src_pts is None or len(src_pts) < 10 or cur_pts is None or len(cur_pts) < 10:
                     return None
-                ms = sum(_math.sin(d) for d in deltas) / len(deltas)
-                mc = sum(_math.cos(d) for d in deltas) / len(deltas)
-                return _math.atan2(ms, mc)
+
+                src_c = np.asarray(src_centroid, dtype=np.float32)
+                cur_c = np.asarray(cur_centroid, dtype=np.float32)
+                src_rel = np.asarray(src_pts, dtype=np.float32) - src_c
+                cur_rel = np.asarray(cur_pts, dtype=np.float32) - cur_c
+
+                # Downsample to keep compute time reasonable
+                max_pts = 2000
+                if len(src_rel) > max_pts:
+                    src_rel = src_rel[::max(1, len(src_rel)//max_pts)]
+                if len(cur_rel) > max_pts:
+                    cur_rel = cur_rel[::max(1, len(cur_rel)//max_pts)]
+
+                if len(src_rel) < 10 or len(cur_rel) < 10:
+                    return None
+
+                all_pts = np.vstack([src_rel, cur_rel])
+                min_x, min_y = float(np.min(all_pts[:, 0])), float(np.min(all_pts[:, 1]))
+                max_x, max_y = float(np.max(all_pts[:, 0])), float(np.max(all_pts[:, 1]))
+                pad = 25
+                w = int(max_x - min_x) + 2 * pad + 1
+                h = int(max_y - min_y) + 2 * pad + 1
+                if w <= 5 or h <= 5 or w > 3000 or h > 3000:
+                    return None
+
+                origin = np.array([pad - min_x, pad - min_y], dtype=np.float32)
+
+                # Build distance-transform image from solved (target) edge points
+                tgt_img = np.full((h, w), 255, dtype=np.uint8)
+                tx = np.round(cur_rel[:, 0] + origin[0]).astype(np.int32)
+                ty = np.round(cur_rel[:, 1] + origin[1]).astype(np.int32)
+                vm = (tx >= 0) & (ty >= 0) & (tx < w) & (ty < h)
+                tgt_img[ty[vm], tx[vm]] = 0
+                # Dilate a little so pixel rounding is not penalised too harshly
+                kernel = np.ones((3, 3), np.uint8)
+                tgt_img = 255 - _cv2.dilate(255 - tgt_img, kernel, iterations=2)
+                dist = _cv2.distanceTransform(tgt_img, _cv2.DIST_L2, 3)
+
+                def _score(angle_deg):
+                    a = _math.radians(angle_deg)
+                    ca, sa = _math.cos(a), _math.sin(a)
+                    rx = src_rel[:, 0] * ca - src_rel[:, 1] * sa + origin[0]
+                    ry = src_rel[:, 0] * sa + src_rel[:, 1] * ca + origin[1]
+                    ix = np.round(rx).astype(np.int32)
+                    iy = np.round(ry).astype(np.int32)
+                    valid = (ix >= 0) & (iy >= 0) & (ix < w) & (iy < h)
+                    if np.count_nonzero(valid) < max(10, int(0.3 * len(src_rel))):
+                        return float('inf')
+                    return float(np.mean(dist[iy[valid], ix[valid]]))
+
+                # Coarse search
+                best, best_s = 0.0, float('inf')
+                for a in np.arange(-180.0, 180.0, 2.0):
+                    s = _score(a)
+                    if s < best_s:
+                        best_s, best = s, float(a)
+
+                # Fine search ±3° around best
+                for a in np.arange(best - 3.0, best + 3.01, 0.25):
+                    n = ((a + 180) % 360) - 180
+                    s = _score(n)
+                    if s < best_s:
+                        best_s, best = s, n
+
+                return round(((best + 180) % 360) - 180, 2)
 
             # source_R0: rotation that aligns piece 0's borders with the target box,
             # measured from the source image before solving.
@@ -288,21 +339,29 @@ class Puzzle:
                 else:
                     robot_end = list(robot_start)
 
-                # _border_R with original shapes + current direction labels measures
-                # how far off the piece's physical orientation is from the post-solve
-                # canonical (the correct assembled orientation). Negating converts
-                # "deviation CW" → "correction needed CCW" for the robot.
+                # Shape-matching rotation: find the angle that maps the source edge
+                # cloud onto the solved edge cloud (both centred on their centroids).
+                # raw_rot is in standard-math CCW convention (positive = CCW).
+                # It includes the global alignment rotation source_R0, so we subtract
+                # that to isolate what the solver actually did to the piece.
+                # Negating converts standard-math CCW → image/robot CCW-positive.
                 rotation_deg = 0.0
-                source_Ri = _border_R(
-                    p, np.array(sc, dtype=float),
-                    _start_edge_shapes.get(id(p), {}),
-                )
-                if source_Ri is not None:
-                    net = -source_Ri
-                    net = (net + _math.pi) % (2 * _math.pi) - _math.pi  # normalise to (-180, 180]
-                    deg = _math.degrees(net) + config.PUZZLE_TARGET_ROTATION_DEG
-                    deg = ((deg + 180) % 360) - 180
-                    rotation_deg = round(deg, 1)
+                if ec is not None:
+                    src_info = _start_ref_pts.get(id(p))
+                    src_all = src_info[1] if src_info is not None else None
+                    cur_all_list = [np.asarray(e.shape, dtype=float) for e in p.edges_ if len(e.shape) > 0]
+                    cur_all = np.concatenate(cur_all_list, axis=0) if cur_all_list else None
+                    raw_rot = _estimate_rotation_by_shape_match(
+                        src_all, np.array(sc, dtype=float),
+                        cur_all, np.array(ec, dtype=float),
+                    )
+                    if raw_rot is not None:
+                        r0_deg = _math.degrees(source_R0) if source_R0 is not None else 0.0
+                        solver_rot = -(raw_rot - r0_deg)  # negate: std-math CCW → robot CCW
+                        deg = ((solver_rot + 180) % 360) - 180
+                        deg += config.PUZZLE_TARGET_ROTATION_DEG
+                        deg = ((deg + 180) % 360) - 180
+                        rotation_deg = round(deg, 1)
 
                 records.append({
                     "piece_index": i,
