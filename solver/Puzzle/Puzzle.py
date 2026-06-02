@@ -288,22 +288,21 @@ class Puzzle:
                 else:
                     robot_end = list(robot_start)
 
+                # _border_R with original shapes + current direction labels measures
+                # how far off the piece's physical orientation is from the post-solve
+                # canonical (the correct assembled orientation). Negating converts
+                # "deviation CW" → "correction needed CCW" for the robot.
                 rotation_deg = 0.0
-                if ec is not None:
-                    raw_rot = _piece_rotation(
-                        p, np.array(sc, dtype=float), np.array(ec, dtype=float),
-                        _start_edge_shapes.get(id(p), {}),
-                    )
-                    if raw_rot is not None:
-                        # raw_rot includes the global alignment rotation (source_R0).
-                        # Subtract it to isolate the rotation the solver applied to this piece.
-                        solver_rot = raw_rot - (source_R0 if source_R0 is not None else 0.0)
-                        solver_rot = (solver_rot + _math.pi) % (2 * _math.pi) - _math.pi
-                        solver_rot = round(solver_rot / (_math.pi / 2)) * (_math.pi / 2)
-                        solver_rot = (solver_rot + _math.pi) % (2 * _math.pi) - _math.pi
-                        rotation_deg = round(
-                            _math.degrees(solver_rot) + config.PUZZLE_TARGET_ROTATION_DEG, 1
-                        )
+                source_Ri = _border_R(
+                    p, np.array(sc, dtype=float),
+                    _start_edge_shapes.get(id(p), {}),
+                )
+                if source_Ri is not None:
+                    net = -source_Ri
+                    net = (net + _math.pi) % (2 * _math.pi) - _math.pi  # normalise to (-180, 180]
+                    deg = _math.degrees(net) + config.PUZZLE_TARGET_ROTATION_DEG
+                    deg = ((deg + 180) % 360) - 180
+                    rotation_deg = round(deg, 1)
 
                 records.append({
                     "piece_index": i,
