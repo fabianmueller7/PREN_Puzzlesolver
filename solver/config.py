@@ -38,49 +38,33 @@ def pixel_to_robot(pixel_x, pixel_y):
     return round(rx), round(ry)
 
 
-# Target field corners in robot mm (where the solved puzzle is placed).
-#   Oben links   (TL): (251.0,   9.0)
-#   Oben rechts  (TR): ( 62.0,   9.0)
-#   Unten links  (BL): (251.0, 136.75)
-#   Unten rechts (BR): ( 60.0, 136.25)
-TARGET_TL = (251.0,   9.0)
-TARGET_TR = ( 62.0,   9.0)
-TARGET_BL = (251.0, 136.75)
-TARGET_BR = ( 60.0, 136.25)
-
+# A5 target field — all values in robot mm.
+#
+# Coordinate system: robot X increases to the LEFT, robot Y increases DOWNWARD.
+#   ge (east)  = column index — X decreases as ge increases (rightward)
+#   gn (north) = row index    — Y decreases as gn increases (upward)
+#
+# Anchor = centre of the piece slot at (ge=0, gn=0) = bottom-left of the target grid.
+#
+# Calibration procedure:
+#   1. Jog robot to centre of bottom-left slot  → set A5_ANCHOR_X, A5_ANCHOR_Y
+#   2. Jog to centre of next slot eastward      → A5_CELL_W = ANCHOR_X - that X
+#   3. Jog to centre of next slot northward     → A5_CELL_H = ANCHOR_Y - that Y
+A5_ANCHOR_X = 203   # TODO: measure physically
+A5_ANCHOR_Y = 105   # TODO: measure physically
+A5_CELL_W   = 94    # TODO: measure physically
+A5_CELL_H   = 64    # TODO: measure physically
 
 # Global rotation offset added to every piece's rotation_deg (degrees, CCW-positive).
-# 0 = no correction. Tune in 90° steps if the puzzle lands in the wrong orientation.
-PUZZLE_TARGET_ROTATION_DEG = 90.0
+# Start at 0. Tune in 90° steps once positions are correct.
+PUZZLE_TARGET_ROTATION_DEG = 0.0
 
 
 def grid_to_robot(ge, gn, grid_W, grid_H):
-    """Map solved-puzzle grid coordinate (ge=east, gn=north) to robot mm.
-
-    Places each piece's centre at the centre of its grid cell inside the target
-    field.  The field is divided into grid_W × grid_H equal cells; the outer
-    edges of the outermost cells coincide with TARGET_TL/TR/BL/BR.
-
-    Cell-centre fractions:
-      u = (ge + 0.5) / grid_W   — 0 = left edge, 1 = right edge
-      v = 1 - (gn + 0.5) / grid_H — 0 = top edge, 1 = bottom edge
-    """
-    u = (ge + 0.5) / grid_W
-    v = 1.0 - (gn + 0.5) / grid_H
-    tl, tr, bl, br = TARGET_TL, TARGET_TR, TARGET_BL, TARGET_BR
-    rx = (1-u)*(1-v)*tl[0] + u*(1-v)*tr[0] + (1-u)*v*bl[0] + u*v*br[0]
-    ry = (1-u)*(1-v)*tl[1] + u*(1-v)*tr[1] + (1-u)*v*bl[1] + u*v*br[1]
-    return round(rx), round(ry)
-
-
-def layout_to_robot(col, row, max_col, max_row):
-    """Fallback: map solved-layout pixel centroid to robot mm (pixel-based, less accurate)."""
-    u = col / max_col if max_col > 0 else 0.5
-    v = row / max_row if max_row > 0 else 0.5
-    tl, tr, bl, br = TARGET_TL, TARGET_TR, TARGET_BL, TARGET_BR
-    rx = (1-u)*(1-v)*tl[0] + u*(1-v)*tr[0] + (1-u)*v*bl[0] + u*v*br[0]
-    ry = (1-u)*(1-v)*tl[1] + u*(1-v)*tr[1] + (1-u)*v*bl[1] + u*v*br[1]
-    return round(rx), round(ry)
+    """Map solved-puzzle grid coordinate (ge=east, gn=north) to robot mm."""
+    rx = round(A5_ANCHOR_X - ge * A5_CELL_W)
+    ry = round(A5_ANCHOR_Y - gn * A5_CELL_H)
+    return rx, ry
 
 # A4 landscape at 150 DPI
 DEBUG_OUTPUT_W = 1782

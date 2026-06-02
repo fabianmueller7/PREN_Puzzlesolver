@@ -267,10 +267,10 @@ class Puzzle:
                     if solved_Ri is not None:
                         delta_raw = solved_Ri - solved_R0
                         delta_raw = (delta_raw + _math.pi) % (2 * _math.pi) - _math.pi
-                        # The solver only applies 90° steps → snap to nearest 90°
-                        # to remove pixel-level noise and keep borders exactly aligned.
                         delta = round(delta_raw / (_math.pi / 2)) * (_math.pi / 2)
                         total = source_R0 + delta
+                        # Snap total to nearest 90° so camera tilt doesn't bleed into result.
+                        total = round(total / (_math.pi / 2)) * (_math.pi / 2)
                         total = (total + _math.pi) % (2 * _math.pi) - _math.pi
                         rotation_deg = round(
                             _math.degrees(total) + config.PUZZLE_TARGET_ROTATION_DEG, 1
