@@ -275,8 +275,35 @@ class Puzzle:
 
                 return round(((best + 180) % 360) - 180, 2)
 
-            # source_R0: rotation that aligns piece 0's borders with the target box,
-            # measured from the source image before solving.
+            # Compute per-piece rotations NOW, before the global alignment rotation
+            # is applied to the solved layout.  This way raw_rot is purely the
+            # solver-applied rotation (rotate_edges + Mover) with no source_R0 bias.
+            pre_ec_list = [self._piece_centroid(p) for p in self.pieces_]
+            rotation_degs = []
+            for i, p in enumerate(self.pieces_):
+                sc_i = _start_centers[id(p)]
+                pre_ec = pre_ec_list[i]
+                rdeg = 0.0
+                if pre_ec is not None:
+                    src_info = _start_ref_pts.get(id(p))
+                    src_all = src_info[1] if src_info is not None else None
+                    cur_list = [np.asarray(e.shape, dtype=float) for e in p.edges_ if len(e.shape) > 0]
+                    cur_all = np.concatenate(cur_list, axis=0) if cur_list else None
+                    raw_rot = _estimate_rotation_by_shape_match(
+                        src_all, np.array(sc_i, dtype=float),
+                        cur_all, np.array(pre_ec, dtype=float),
+                    )
+                    if raw_rot is not None:
+                        # raw_rot: CCW in shape-match formula = CW in image.
+                        # Negate to get robot CCW-positive convention.
+                        solver_rot = -raw_rot
+                        deg = ((solver_rot + 180) % 360) - 180
+                        deg += config.PUZZLE_TARGET_ROTATION_DEG
+                        deg = ((deg + 180) % 360) - 180
+                        rdeg = round(deg, 1)
+                rotation_degs.append(rdeg)
+
+            # Apply global alignment rotation for visualization (stick.png).
             start_p = next(
                 (p for p in self.pieces_ if getattr(p, "coord", None) == (0, 0)), None
             )
@@ -293,10 +320,6 @@ class Puzzle:
                     _start_edge_dirs.get(id(start_p), {}),
                 )
 
-            # Rotate the entire solved layout to horizontal BEFORE computing centroids
-            # and rotation angles.  source_R0 is the tilt of piece 0 in the source
-            # image; applying it to the solved layout aligns the grid with the axes,
-            # making stick.png axis-aligned and giving clean 0°/90° deltas.
             if source_R0 is not None:
                 all_vis = np.concatenate([
                     e.shape for p in self.pieces_ for e in p.edges_ if len(e.shape) > 0
@@ -315,16 +338,8 @@ class Puzzle:
                         e.shape = np.round(pts).astype(int)
                 self.translate_puzzle()
 
-            # Centroids from the now-horizontal solved layout.
+            # Centroids from the now-aligned solved layout (used for debug coords).
             ec_list = [self._piece_centroid(p) for p in self.pieces_]
-
-            # solved_R0: border-edge alignment of piece 0 in the horizontal layout.
-            # Should be ~0 after rotation; used as reference baseline for per-piece delta.
-            solved_R0 = None
-            if start_p is not None:
-                ec0 = ec_list[self.pieces_.index(start_p)]
-                if ec0 is not None:
-                    solved_R0 = _border_R(start_p, np.array(ec0, dtype=float))
 
             records = []
             for i, p in enumerate(self.pieces_):
@@ -339,29 +354,7 @@ class Puzzle:
                 else:
                     robot_end = list(robot_start)
 
-                # Shape-matching rotation: find the angle that maps the source edge
-                # cloud onto the solved edge cloud (both centred on their centroids).
-                # raw_rot is in standard-math CCW convention (positive = CCW).
-                # It includes the global alignment rotation source_R0, so we subtract
-                # that to isolate what the solver actually did to the piece.
-                # Negating converts standard-math CCW → image/robot CCW-positive.
-                rotation_deg = 0.0
-                if ec is not None:
-                    src_info = _start_ref_pts.get(id(p))
-                    src_all = src_info[1] if src_info is not None else None
-                    cur_all_list = [np.asarray(e.shape, dtype=float) for e in p.edges_ if len(e.shape) > 0]
-                    cur_all = np.concatenate(cur_all_list, axis=0) if cur_all_list else None
-                    raw_rot = _estimate_rotation_by_shape_match(
-                        src_all, np.array(sc, dtype=float),
-                        cur_all, np.array(ec, dtype=float),
-                    )
-                    if raw_rot is not None:
-                        r0_deg = _math.degrees(source_R0) if source_R0 is not None else 0.0
-                        solver_rot = -(raw_rot - r0_deg)  # negate: std-math CCW → robot CCW
-                        deg = ((solver_rot + 180) % 360) - 180
-                        deg += config.PUZZLE_TARGET_ROTATION_DEG
-                        deg = ((deg + 180) % 360) - 180
-                        rotation_deg = round(deg, 1)
+                rotation_deg = rotation_degs[i]
 
                 records.append({
                     "piece_index": i,
