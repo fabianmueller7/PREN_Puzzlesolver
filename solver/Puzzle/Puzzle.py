@@ -303,42 +303,7 @@ class Puzzle:
                         rdeg = round(deg, 1)
                 rotation_degs.append(rdeg)
 
-            # Apply global alignment rotation for visualization (stick.png).
-            start_p = next(
-                (p for p in self.pieces_ if getattr(p, "coord", None) == (0, 0)), None
-            )
-            source_R0 = None
-            if start_p is not None:
-                src_pts_info = _start_ref_pts.get(id(start_p))
-                if src_pts_info is not None:
-                    sc0 = src_pts_info[1].mean(axis=0)
-                else:
-                    sc0 = np.array(_start_centers[id(start_p)], dtype=float)
-                source_R0 = _border_R(
-                    start_p, sc0,
-                    _start_edge_shapes.get(id(start_p), {}),
-                    _start_edge_dirs.get(id(start_p), {}),
-                )
-
-            if source_R0 is not None:
-                all_vis = np.concatenate([
-                    e.shape for p in self.pieces_ for e in p.edges_ if len(e.shape) > 0
-                ])
-                cx = (float(all_vis[:, 0].min()) + float(all_vis[:, 0].max())) / 2.0
-                cy = (float(all_vis[:, 1].min()) + float(all_vis[:, 1].max())) / 2.0
-                cos_r, sin_r = _math.cos(source_R0), _math.sin(source_R0)
-                for p in self.pieces_:
-                    for e in p.edges_:
-                        if len(e.shape) == 0:
-                            continue
-                        pts = e.shape.astype(float)
-                        dx, dy = pts[:, 0] - cx, pts[:, 1] - cy
-                        pts[:, 0] = cx + cos_r * dx - sin_r * dy
-                        pts[:, 1] = cy + sin_r * dx + cos_r * dy
-                        e.shape = np.round(pts).astype(int)
-                self.translate_puzzle()
-
-            # Centroids from the now-aligned solved layout (used for debug coords).
+            # Centroids from the solved layout (for debug display coords).
             ec_list = [self._piece_centroid(p) for p in self.pieces_]
 
             records = []
