@@ -197,6 +197,33 @@ class Puzzle:
                 mc = sum(_math.cos(t) for t in thetas) / len(thetas)
                 return _math.atan2(ms, mc)
 
+            def _piece_rotation(piece, src_centroid, cur_centroid, src_edge_shapes):
+                """Circular-mean CCW rotation (rad) of piece from source to current layout.
+                Compares border-edge midpoint vectors relative to centroid."""
+                deltas = []
+                for e in piece.edges_:
+                    if e.type != TypeEdge.BORDER:
+                        continue
+                    src_pts = src_edge_shapes.get(id(e))
+                    if src_pts is None or len(src_pts) < 2:
+                        continue
+                    cur_pts = np.asarray(e.shape, dtype=float)
+                    if len(cur_pts) < 2:
+                        continue
+                    sv = src_pts.mean(axis=0) - src_centroid
+                    cv = cur_pts.mean(axis=0) - cur_centroid
+                    if np.linalg.norm(sv) < 1e-6 or np.linalg.norm(cv) < 1e-6:
+                        continue
+                    deltas.append(_math.atan2(
+                        float(sv[0] * cv[1] - sv[1] * cv[0]),
+                        float(sv[0] * cv[0] + sv[1] * cv[1]),
+                    ))
+                if not deltas:
+                    return None
+                ms = sum(_math.sin(d) for d in deltas) / len(deltas)
+                mc = sum(_math.cos(d) for d in deltas) / len(deltas)
+                return _math.atan2(ms, mc)
+
             # source_R0: rotation that aligns piece 0's borders with the target box,
             # measured from the source image before solving.
             start_p = next(
@@ -261,11 +288,22 @@ class Puzzle:
                 else:
                     robot_end = list(robot_start)
 
-                # rotation_steps counts cumulative 90° CW turns applied by rotate_edges().
-                # Robot must replicate each CW step → negative in CCW-positive convention.
-                rotation_deg = round(
-                    -getattr(p, 'rotation_steps', 0) * 90.0 + config.PUZZLE_TARGET_ROTATION_DEG, 1
-                )
+                rotation_deg = 0.0
+                if ec is not None:
+                    raw_rot = _piece_rotation(
+                        p, np.array(sc, dtype=float), np.array(ec, dtype=float),
+                        _start_edge_shapes.get(id(p), {}),
+                    )
+                    if raw_rot is not None:
+                        # raw_rot includes the global alignment rotation (source_R0).
+                        # Subtract it to isolate the rotation the solver applied to this piece.
+                        solver_rot = raw_rot - (source_R0 if source_R0 is not None else 0.0)
+                        solver_rot = (solver_rot + _math.pi) % (2 * _math.pi) - _math.pi
+                        solver_rot = round(solver_rot / (_math.pi / 2)) * (_math.pi / 2)
+                        solver_rot = (solver_rot + _math.pi) % (2 * _math.pi) - _math.pi
+                        rotation_deg = round(
+                            _math.degrees(solver_rot) + config.PUZZLE_TARGET_ROTATION_DEG, 1
+                        )
 
                 records.append({
                     "piece_index": i,
