@@ -153,17 +153,13 @@ class Puzzle:
 
         if config.DEBUG_PIECE_CENTERS == 1:
             import json
-            records = []
-
-            ec_list = [self._piece_centroid(p) for p in self.pieces_]
+            import math as _math
 
             # Grid dimensions from piece coords: p.coord = (gn, ge) where gn=north, ge=east.
             # Start piece (SW corner) is at (0, 0); puzzle grows N and E from there.
             coords = [p.coord for p in self.pieces_ if hasattr(p, "coord")]
             grid_H = (max(c[0] for c in coords) + 1) if coords else 1  # north axis
             grid_W = (max(c[1] for c in coords) + 1) if coords else 1  # east axis
-
-            import math as _math
 
             _REQUIRED_OUTWARD = {
                 Directions.N: -_math.pi / 2,
@@ -201,19 +197,13 @@ class Puzzle:
                 mc = sum(_math.cos(t) for t in thetas) / len(thetas)
                 return _math.atan2(ms, mc)
 
-            # Piece 0 = start piece (SW corner, coord (0,0)).
-            # source_R0: rotation that aligns piece 0's borders with the target box
-            #            (measured from source image border edge midpoints).
-            # solved_R0: same metric measured in the solved layout (reference baseline).
-            # rotation[i] = source_R0 + (solved_R[i] - solved_R0)
+            # source_R0: rotation that aligns piece 0's borders with the target box,
+            # measured from the source image before solving.
             start_p = next(
                 (p for p in self.pieces_ if getattr(p, "coord", None) == (0, 0)), None
             )
-            source_R0 = solved_R0 = None
+            source_R0 = None
             if start_p is not None:
-                ec0 = ec_list[self.pieces_.index(start_p)]
-                # Use edge-point mean (same method as ec_list/_piece_centroid) so that
-                # source_R0 and solved_R0 measure vectors from a consistent centroid type.
                 src_pts_info = _start_ref_pts.get(id(start_p))
                 if src_pts_info is not None:
                     sc0 = src_pts_info[1].mean(axis=0)
@@ -224,9 +214,41 @@ class Puzzle:
                     _start_edge_shapes.get(id(start_p), {}),
                     _start_edge_dirs.get(id(start_p), {}),
                 )
+
+            # Rotate the entire solved layout to horizontal BEFORE computing centroids
+            # and rotation angles.  source_R0 is the tilt of piece 0 in the source
+            # image; applying it to the solved layout aligns the grid with the axes,
+            # making stick.png axis-aligned and giving clean 0°/90° deltas.
+            if source_R0 is not None:
+                all_vis = np.concatenate([
+                    e.shape for p in self.pieces_ for e in p.edges_ if len(e.shape) > 0
+                ])
+                cx = (float(all_vis[:, 0].min()) + float(all_vis[:, 0].max())) / 2.0
+                cy = (float(all_vis[:, 1].min()) + float(all_vis[:, 1].max())) / 2.0
+                cos_r, sin_r = _math.cos(source_R0), _math.sin(source_R0)
+                for p in self.pieces_:
+                    for e in p.edges_:
+                        if len(e.shape) == 0:
+                            continue
+                        pts = e.shape.astype(float)
+                        dx, dy = pts[:, 0] - cx, pts[:, 1] - cy
+                        pts[:, 0] = cx + cos_r * dx - sin_r * dy
+                        pts[:, 1] = cy + sin_r * dx + cos_r * dy
+                        e.shape = np.round(pts).astype(int)
+                self.translate_puzzle()
+
+            # Centroids from the now-horizontal solved layout.
+            ec_list = [self._piece_centroid(p) for p in self.pieces_]
+
+            # solved_R0: border-edge alignment of piece 0 in the horizontal layout.
+            # Should be ~0 after rotation; used as reference baseline for per-piece delta.
+            solved_R0 = None
+            if start_p is not None:
+                ec0 = ec_list[self.pieces_.index(start_p)]
                 if ec0 is not None:
                     solved_R0 = _border_R(start_p, np.array(ec0, dtype=float))
 
+            records = []
             for i, p in enumerate(self.pieces_):
                 sc = _start_centers[id(p)]
                 ec = ec_list[i]
@@ -268,30 +290,10 @@ class Puzzle:
                 json.dump(records, f, indent=2)
             self.log("Piece centers saved to", out_path)
 
-            # Re-export stick.png rotated to horizontal so the visualization is
-            # axis-aligned.  source_R0 is the angle that brings piece 0's borders
-            # to horizontal — applying it to the whole layout straightens everything.
-            if source_R0 is not None:
-                all_vis = np.concatenate([
-                    e.shape for p in self.pieces_ for e in p.edges_ if len(e.shape) > 0
-                ])
-                cx = (float(all_vis[:, 0].min()) + float(all_vis[:, 0].max())) / 2.0
-                cy = (float(all_vis[:, 1].min()) + float(all_vis[:, 1].max())) / 2.0
-                cos_r, sin_r = _math.cos(source_R0), _math.sin(source_R0)
-                for p in self.pieces_:
-                    for e in p.edges_:
-                        if len(e.shape) == 0:
-                            continue
-                        pts = e.shape.astype(float)
-                        dx, dy = pts[:, 0] - cx, pts[:, 1] - cy
-                        pts[:, 0] = cx + cos_r * dx - sin_r * dy
-                        pts[:, 1] = cy + sin_r * dx + cos_r * dy
-                        e.shape = np.round(pts).astype(int)
-                self.translate_puzzle()
-                self.export_pieces(
-                    os.path.join(os.environ["ZOLVER_TEMP_DIR"], "stick.png"),
-                    display=False,
-                )
+            self.export_pieces(
+                os.path.join(os.environ["ZOLVER_TEMP_DIR"], "stick.png"),
+                display=False,
+            )
 
     def get_bbox(self):
         bboxes = [p.get_bbox() for p in self.pieces_]
