@@ -57,11 +57,15 @@ A5_CELL_H   = 64    # TODO: measure physically
 
 # Global rotation offset added to every piece's rotation_deg (degrees, CCW-positive).
 # Start at 0. Tune in 90° steps once positions are correct.
-PUZZLE_TARGET_ROTATION_DEG = 0.0
+PUZZLE_TARGET_ROTATION_DEG = 90.0
 
 # Per-column (ge) rotation correction in degrees. Applied on top of PUZZLE_TARGET_ROTATION_DEG.
 # Use when a whole column lands consistently rotated by the same amount.
-COLUMN_ROTATION_CORRECTIONS = {1: 180.0}  # ge=1 column needs +180°
+COLUMN_ROTATION_CORRECTIONS = {}
+
+# Per-row (gn) rotation correction in degrees. gn=0 is the lower (south) row.
+# Applied on top of PUZZLE_TARGET_ROTATION_DEG.
+ROW_ROTATION_CORRECTIONS = {0: 180.0}  # lower row (gn=0) needs +180°
 
 
 def grid_to_robot(ge, gn, grid_W, grid_H):

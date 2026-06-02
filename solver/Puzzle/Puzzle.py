@@ -186,7 +186,9 @@ class Puzzle:
                     if ang is not None:
                         deg = ang + config.PUZZLE_TARGET_ROTATION_DEG
                         if hasattr(p, "coord"):
-                            deg += config.COLUMN_ROTATION_CORRECTIONS.get(p.coord[1], 0.0)
+                            gn, ge = p.coord
+                            deg += config.COLUMN_ROTATION_CORRECTIONS.get(ge, 0.0)
+                            deg += config.ROW_ROTATION_CORRECTIONS.get(gn, 0.0)
                         deg = ((deg + 180) % 360) - 180
                         rdeg = round(deg, 1)
                 rotation_degs.append(rdeg)
