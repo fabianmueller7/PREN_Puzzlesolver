@@ -67,7 +67,7 @@ COLUMN_ROTATION_CORRECTIONS = {1: 180.0}  # right column (ge=1) needs +180°
 def grid_to_robot(ge, gn, grid_W, grid_H):
     """Map solved-puzzle grid coordinate (ge=east, gn=north) to robot mm."""
     rx = round(A5_ANCHOR_X - ge * A5_CELL_W)
-    ry = round(A5_ANCHOR_Y + gn * A5_CELL_H)
+    ry = round(A5_ANCHOR_Y - gn * A5_CELL_H)
     return rx, ry
 
 # A4 landscape at 150 DPI
