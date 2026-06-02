@@ -261,23 +261,11 @@ class Puzzle:
                 else:
                     robot_end = list(robot_start)
 
-                rotation_deg = 0.0
-                if ec is not None:
-                    # Per-piece source angle: how piece i was oriented before solving.
-                    source_Ri = _border_R(
-                        p, np.array(sc, dtype=float),
-                        _start_edge_shapes.get(id(p), {}),
-                        _start_edge_dirs.get(id(p), {}),
-                    )
-                    solved_Ri = _border_R(p, np.array(ec, dtype=float))
-                    if source_Ri is not None and solved_Ri is not None:
-                        net = solved_Ri - source_Ri
-                        net = (net + _math.pi) % (2 * _math.pi) - _math.pi
-                        net = round(net / (_math.pi / 2)) * (_math.pi / 2)
-                        net = (net + _math.pi) % (2 * _math.pi) - _math.pi
-                        rotation_deg = round(
-                            _math.degrees(net) + config.PUZZLE_TARGET_ROTATION_DEG, 1
-                        )
+                # rotation_steps counts cumulative 90° CW turns applied by rotate_edges().
+                # Robot must replicate each CW step → negative in CCW-positive convention.
+                rotation_deg = round(
+                    -getattr(p, 'rotation_steps', 0) * 90.0 + config.PUZZLE_TARGET_ROTATION_DEG, 1
+                )
 
                 records.append({
                     "piece_index": i,
