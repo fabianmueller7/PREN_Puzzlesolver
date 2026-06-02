@@ -262,18 +262,21 @@ class Puzzle:
                     robot_end = list(robot_start)
 
                 rotation_deg = 0.0
-                if ec is not None and source_R0 is not None and solved_R0 is not None:
+                if ec is not None:
+                    # Per-piece source angle: how piece i was oriented before solving.
+                    source_Ri = _border_R(
+                        p, np.array(sc, dtype=float),
+                        _start_edge_shapes.get(id(p), {}),
+                        _start_edge_dirs.get(id(p), {}),
+                    )
                     solved_Ri = _border_R(p, np.array(ec, dtype=float))
-                    if solved_Ri is not None:
-                        delta_raw = solved_Ri - solved_R0
-                        delta_raw = (delta_raw + _math.pi) % (2 * _math.pi) - _math.pi
-                        delta = round(delta_raw / (_math.pi / 2)) * (_math.pi / 2)
-                        total = source_R0 + delta
-                        # Snap total to nearest 90° so camera tilt doesn't bleed into result.
-                        total = round(total / (_math.pi / 2)) * (_math.pi / 2)
-                        total = (total + _math.pi) % (2 * _math.pi) - _math.pi
+                    if source_Ri is not None and solved_Ri is not None:
+                        net = solved_Ri - source_Ri
+                        net = (net + _math.pi) % (2 * _math.pi) - _math.pi
+                        net = round(net / (_math.pi / 2)) * (_math.pi / 2)
+                        net = (net + _math.pi) % (2 * _math.pi) - _math.pi
                         rotation_deg = round(
-                            _math.degrees(total) + config.PUZZLE_TARGET_ROTATION_DEG, 1
+                            _math.degrees(net) + config.PUZZLE_TARGET_ROTATION_DEG, 1
                         )
 
                 records.append({
