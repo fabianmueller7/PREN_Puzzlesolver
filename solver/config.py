@@ -61,7 +61,7 @@ PUZZLE_TARGET_ROTATION_DEG = 0.0
 
 # Per-column (ge) rotation correction in degrees. Applied on top of PUZZLE_TARGET_ROTATION_DEG.
 # Use when a whole column lands consistently rotated by the same amount.
-COLUMN_ROTATION_CORRECTIONS = {1: 180.0}  # right column (ge=1) needs +180°
+COLUMN_ROTATION_CORRECTIONS = {0: 180.0}  # left column (ge=0) needs +180°
 
 
 def grid_to_robot(ge, gn, grid_W, grid_H):
