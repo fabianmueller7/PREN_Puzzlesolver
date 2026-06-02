@@ -57,7 +57,7 @@ A5_CELL_H   = 64    # TODO: measure physically
 
 # Global rotation offset added to every piece's rotation_deg (degrees, CCW-positive).
 # Start at 0. Tune in 90° steps once positions are correct.
-PUZZLE_TARGET_ROTATION_DEG = 0.0
+PUZZLE_TARGET_ROTATION_DEG = -90.0
 
 
 def grid_to_robot(ge, gn, grid_W, grid_H):
