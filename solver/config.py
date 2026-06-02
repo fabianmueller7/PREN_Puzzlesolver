@@ -51,7 +51,7 @@ TARGET_BR = ( 60.0, 136.25)
 
 # Global rotation offset added to every piece's rotation_deg (degrees, CCW-positive).
 # 0 = no correction. Tune in 90° steps if the puzzle lands in the wrong orientation.
-PUZZLE_TARGET_ROTATION_DEG = 0.0
+PUZZLE_TARGET_ROTATION_DEG = 90.0
 
 
 def grid_to_robot(ge, gn, grid_W, grid_H):
