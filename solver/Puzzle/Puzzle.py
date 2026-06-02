@@ -77,26 +77,11 @@ class Puzzle:
                 id(p): p.img_centroid if p.img_centroid is not None else self._piece_centroid(p)
                 for p in self.pieces_
             }
-            # Capture ALL edge points for each piece BEFORE solving
-            # (shapes are still in original image coordinates).
-            # Stored as a single (N, 2) array so the rotation estimator can use
-            # all points for a robust circular-mean angle measurement.
-            _start_ref_pts = {}
-            for p in self.pieces_:
-                sc = _start_centers[id(p)]
-                all_pts = [np.asarray(e.shape, dtype=float) for e in p.edges_ if len(e.shape) > 0]
-                if all_pts:
-                    _start_ref_pts[id(p)] = (sc, np.concatenate(all_pts, axis=0))
-
-            # Per-edge shape and direction snapshots for border-alignment rotation calculation.
-            # Both must be captured together: the start-piece rotation loop (lines 120-133)
-            # mutates e.direction AND e.shape, so we need their pre-rotation state.
+            # Per-edge shape snapshots captured BEFORE solving (shapes still in
+            # original image coords). The Kabsch rotation estimate compares these
+            # against the final solved e.shape, which is a rigid transform of them.
             _start_edge_shapes = {
                 id(p): {id(e): np.asarray(e.shape, dtype=float).copy() for e in p.edges_}
-                for p in self.pieces_
-            }
-            _start_edge_dirs = {
-                id(p): {id(e): e.direction for e in p.edges_}
                 for p in self.pieces_
             }
 
@@ -161,147 +146,47 @@ class Puzzle:
             grid_H = (max(c[0] for c in coords) + 1) if coords else 1  # north axis
             grid_W = (max(c[1] for c in coords) + 1) if coords else 1  # east axis
 
-            _REQUIRED_OUTWARD = {
-                Directions.N: -_math.pi / 2,
-                Directions.S:  _math.pi / 2,
-                Directions.E:  0.0,
-                Directions.W:  _math.pi,
-            }
-
-            def _border_R(piece, centroid_arr, edge_src_dict=None, edge_dir_dict=None):
-                """Circular-mean outward-normal deviation for all BORDER edges.
-                Uses edge_src_dict shapes (source image) when provided, else e.shape (solved layout).
-                Uses edge_dir_dict direction labels when provided, else current e.direction.
-                Returns angle in radians, or None if no usable border edges."""
-                thetas = []
-                for e in piece.edges_:
-                    if e.type != TypeEdge.BORDER:
-                        continue
-                    if edge_src_dict is not None:
-                        pts = edge_src_dict.get(id(e))
-                    else:
-                        pts = np.asarray(e.shape, dtype=float) if len(e.shape) >= 2 else None
-                    if pts is None or len(pts) < 2:
-                        continue
-                    mid = np.asarray(pts, dtype=float).mean(axis=0)
-                    dx = float(mid[0] - centroid_arr[0])
-                    dy = float(mid[1] - centroid_arr[1])
-                    if abs(dx) < 1e-6 and abs(dy) < 1e-6:
-                        continue
-                    direction = edge_dir_dict.get(id(e), e.direction) if edge_dir_dict else e.direction
-                    t = _math.atan2(dy, dx) - _REQUIRED_OUTWARD.get(direction, 0.0)
-                    thetas.append((t + _math.pi) % (2 * _math.pi) - _math.pi)
-                if not thetas:
+            def _kabsch_angle_deg(src_pts, dst_pts):
+                """Net rotation (degrees) of the rigid transform mapping corresponded
+                point cloud src_pts -> dst_pts. Points are (N,2) in image coords, same order.
+                Edge shapes are only ever rigidly transformed during solving, so the source
+                and solved point clouds correspond exactly and SVD recovers the rotation.
+                Returns angle in (-180,180] or None."""
+                src = np.asarray(src_pts, dtype=float)
+                dst = np.asarray(dst_pts, dtype=float)
+                if len(src) < 2 or len(src) != len(dst):
                     return None
-                ms = sum(_math.sin(t) for t in thetas) / len(thetas)
-                mc = sum(_math.cos(t) for t in thetas) / len(thetas)
-                return _math.atan2(ms, mc)
+                src_c = src - src.mean(axis=0)
+                dst_c = dst - dst.mean(axis=0)
+                H = src_c.T @ dst_c                      # 2x2 covariance
+                U, S, Vt = np.linalg.svd(H)
+                d = np.sign(np.linalg.det(Vt.T @ U.T))   # reflection guard
+                R = Vt.T @ np.diag([1.0, d]) @ U.T
+                return _math.degrees(_math.atan2(R[1, 0], R[0, 0]))
 
-            def _estimate_rotation_by_shape_match(src_pts, src_centroid, cur_pts, cur_centroid):
-                """
-                Brute-force rotation search (coarse 2°, fine 0.25°): find the CCW angle
-                (standard-math convention, positive=CCW) that best maps the centred source
-                edge cloud onto the centred solved edge cloud via a distance-transform score.
-                Returns degrees, or None if insufficient data.
-                Adapted from PuzzleSimulator/tests/run_robot_solver.py.
-                """
-                import cv2 as _cv2
-
-                if src_pts is None or len(src_pts) < 10 or cur_pts is None or len(cur_pts) < 10:
-                    return None
-
-                src_c = np.asarray(src_centroid, dtype=np.float32)
-                cur_c = np.asarray(cur_centroid, dtype=np.float32)
-                src_rel = np.asarray(src_pts, dtype=np.float32) - src_c
-                cur_rel = np.asarray(cur_pts, dtype=np.float32) - cur_c
-
-                # Downsample to keep compute time reasonable
-                max_pts = 2000
-                if len(src_rel) > max_pts:
-                    src_rel = src_rel[::max(1, len(src_rel)//max_pts)]
-                if len(cur_rel) > max_pts:
-                    cur_rel = cur_rel[::max(1, len(cur_rel)//max_pts)]
-
-                if len(src_rel) < 10 or len(cur_rel) < 10:
-                    return None
-
-                all_pts = np.vstack([src_rel, cur_rel])
-                min_x, min_y = float(np.min(all_pts[:, 0])), float(np.min(all_pts[:, 1]))
-                max_x, max_y = float(np.max(all_pts[:, 0])), float(np.max(all_pts[:, 1]))
-                pad = 25
-                w = int(max_x - min_x) + 2 * pad + 1
-                h = int(max_y - min_y) + 2 * pad + 1
-                if w <= 5 or h <= 5 or w > 3000 or h > 3000:
-                    return None
-
-                origin = np.array([pad - min_x, pad - min_y], dtype=np.float32)
-
-                # Build distance-transform image from solved (target) edge points
-                tgt_img = np.full((h, w), 255, dtype=np.uint8)
-                tx = np.round(cur_rel[:, 0] + origin[0]).astype(np.int32)
-                ty = np.round(cur_rel[:, 1] + origin[1]).astype(np.int32)
-                vm = (tx >= 0) & (ty >= 0) & (tx < w) & (ty < h)
-                tgt_img[ty[vm], tx[vm]] = 0
-                # Dilate a little so pixel rounding is not penalised too harshly
-                kernel = np.ones((3, 3), np.uint8)
-                tgt_img = 255 - _cv2.dilate(255 - tgt_img, kernel, iterations=2)
-                dist = _cv2.distanceTransform(tgt_img, _cv2.DIST_L2, 3)
-
-                def _score(angle_deg):
-                    a = _math.radians(angle_deg)
-                    ca, sa = _math.cos(a), _math.sin(a)
-                    rx = src_rel[:, 0] * ca - src_rel[:, 1] * sa + origin[0]
-                    ry = src_rel[:, 0] * sa + src_rel[:, 1] * ca + origin[1]
-                    ix = np.round(rx).astype(np.int32)
-                    iy = np.round(ry).astype(np.int32)
-                    valid = (ix >= 0) & (iy >= 0) & (ix < w) & (iy < h)
-                    if np.count_nonzero(valid) < max(10, int(0.3 * len(src_rel))):
-                        return float('inf')
-                    return float(np.mean(dist[iy[valid], ix[valid]]))
-
-                # Coarse search
-                best, best_s = 0.0, float('inf')
-                for a in np.arange(-180.0, 180.0, 2.0):
-                    s = _score(a)
-                    if s < best_s:
-                        best_s, best = s, float(a)
-
-                # Fine search ±3° around best
-                for a in np.arange(best - 3.0, best + 3.01, 0.25):
-                    n = ((a + 180) % 360) - 180
-                    s = _score(n)
-                    if s < best_s:
-                        best_s, best = s, n
-
-                return round(((best + 180) % 360) - 180, 2)
-
-            # Compute per-piece rotations NOW, before the global alignment rotation
-            # is applied to the solved layout.  This way raw_rot is purely the
-            # solver-applied rotation (rotate_edges + Mover) with no source_R0 bias.
-            pre_ec_list = [self._piece_centroid(p) for p in self.pieces_]
+            # Per-piece rotation via Kabsch/SVD on corresponded edge points.
+            # _start_edge_shapes holds each edge's pre-solve points; e.shape holds the
+            # final solved points (same points, same order, rigidly transformed).
             rotation_degs = []
             for i, p in enumerate(self.pieces_):
-                sc_i = _start_centers[id(p)]
-                pre_ec = pre_ec_list[i]
+                src_list, dst_list = [], []
+                src_edges = _start_edge_shapes.get(id(p), {})
+                for e in p.edges_:
+                    src_e = src_edges.get(id(e))
+                    if src_e is None:
+                        continue
+                    dst_e = np.asarray(e.shape, dtype=float)
+                    if len(dst_e) < 2 or len(dst_e) != len(src_e):
+                        continue
+                    src_list.append(np.asarray(src_e, dtype=float))
+                    dst_list.append(dst_e)
                 rdeg = 0.0
-                if pre_ec is not None:
-                    src_info = _start_ref_pts.get(id(p))
-                    src_all = src_info[1] if src_info is not None else None
-                    cur_list = [np.asarray(e.shape, dtype=float) for e in p.edges_ if len(e.shape) > 0]
-                    cur_all = np.concatenate(cur_list, axis=0) if cur_list else None
-                    raw_rot = _estimate_rotation_by_shape_match(
-                        src_all, np.array(sc_i, dtype=float),
-                        cur_all, np.array(pre_ec, dtype=float),
-                    )
-                    if raw_rot is not None:
-                        # raw_rot: CCW in shape-match formula = CW in image.
-                        # Negate to get robot CCW-positive convention.
-                        solver_rot = -raw_rot
-                        deg = ((solver_rot + 180) % 360) - 180
-                        deg += config.PUZZLE_TARGET_ROTATION_DEG
+                if src_list:
+                    ang = _kabsch_angle_deg(np.concatenate(src_list), np.concatenate(dst_list))
+                    if ang is not None:
+                        deg = ang + config.PUZZLE_TARGET_ROTATION_DEG
                         if hasattr(p, "coord"):
-                            ge_col = p.coord[1]
-                            deg += config.COLUMN_ROTATION_CORRECTIONS.get(ge_col, 0.0)
+                            deg += config.COLUMN_ROTATION_CORRECTIONS.get(p.coord[1], 0.0)
                         deg = ((deg + 180) % 360) - 180
                         rdeg = round(deg, 1)
                 rotation_degs.append(rdeg)
