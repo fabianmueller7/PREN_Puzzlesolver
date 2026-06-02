@@ -59,6 +59,10 @@ A5_CELL_H   = 64    # TODO: measure physically
 # Start at 0. Tune in 90° steps once positions are correct.
 PUZZLE_TARGET_ROTATION_DEG = 0.0
 
+# Per-column (ge) rotation correction in degrees. Applied on top of PUZZLE_TARGET_ROTATION_DEG.
+# Use when a whole column lands consistently rotated by the same amount.
+COLUMN_ROTATION_CORRECTIONS = {1: 180.0}  # right column (ge=1) needs +180°
+
 
 def grid_to_robot(ge, gn, grid_W, grid_H):
     """Map solved-puzzle grid coordinate (ge=east, gn=north) to robot mm."""

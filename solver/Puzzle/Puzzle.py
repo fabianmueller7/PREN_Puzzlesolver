@@ -299,6 +299,9 @@ class Puzzle:
                         solver_rot = -raw_rot
                         deg = ((solver_rot + 180) % 360) - 180
                         deg += config.PUZZLE_TARGET_ROTATION_DEG
+                        if hasattr(p, "coord"):
+                            ge_col = p.coord[1]
+                            deg += config.COLUMN_ROTATION_CORRECTIONS.get(ge_col, 0.0)
                         deg = ((deg + 180) % 360) - 180
                         rdeg = round(deg, 1)
                 rotation_degs.append(rdeg)
