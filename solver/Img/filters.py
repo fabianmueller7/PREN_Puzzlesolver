@@ -363,6 +363,42 @@ def _find_corners_curvature_peaks(cnt, green=False):
     return best_corners
 
 
+def _classify_edges_by_baseline(edges, center, flat_frac=config.EDGE_FLAT_FRAC):
+    """HEAD/HOLE/BORDER per edge from deviation of the curve vs its
+    corner-to-corner baseline, signed against the outward (away-from-centre) dir.
+
+    edges:  list of 4 (M,2) arrays of (col,row) contour points, each starting and
+            ending at a piece corner.
+    center: (cx, cy) piece centre in the same coordinate space.
+    flat_frac: max |apex deviation| / baseline length below which the edge is flat.
+    """
+    center = np.asarray(center, dtype=float)
+    types = []
+    for pts in edges:
+        pts = np.asarray(pts, dtype=float)
+        a, b = pts[0], pts[-1]                       # the two corners
+        base = b - a
+        base_len = np.linalg.norm(base)
+        if base_len < 1e-6 or len(pts) < 3:
+            types.append(TypeEdge.UNDEFINED)
+            continue
+        n_hat = np.array([-base[1], base[0]]) / base_len   # unit normal to baseline
+        signed = (pts - a) @ n_hat                   # signed perp. offset per point
+        m = max(1, int(0.10 * len(pts)))             # ignore corner-rounding margin
+        interior = signed[m:-m] if len(signed) > 2 * m else signed
+        k = int(np.argmax(np.abs(interior)))
+        max_dev = interior[k]                         # apex deviation (signed)
+        if abs(max_dev) / base_len < flat_frac:
+            types.append(TypeEdge.BORDER)
+            continue
+        mid = (a + b) / 2.0
+        outward = mid - center                       # away-from-centre direction
+        apex_disp = n_hat * max_dev                  # actual deviation vector
+        types.append(TypeEdge.HEAD if np.dot(apex_disp, outward) > 0
+                     else TypeEdge.HOLE)
+    return types
+
+
 def my_find_corner_signature(cnt, green=False):
     """Determine corner/edge positions by analyzing a piece contour."""
     # --- A: Find corners via curvature peaks (top-K combinations search) ---
@@ -377,113 +413,7 @@ def my_find_corner_signature(cnt, green=False):
     offset = n - int(corner_indices[3]) - 1
     best_fit = corner_indices + offset
 
-    # --- C: Sigma loop for edge-type classification only (corners are fixed) ---
-    sigma = 5
-    max_sigma = 12 if green else 20
-    types_pieces = []
-    extr = extr_inverse = relative_angles = None
-
-    while sigma <= max_sigma:
-        print(f"Classify edges with sigma={sigma}...")
-
-        cnt_convert = [c[0] for c in cnt]
-        _ra = np.array(get_relative_angles(np.array(cnt_convert), sigma=sigma))
-        _ra_inv = -_ra.copy()
-
-        # double-roll trick to catch wrap-around peaks
-        extr_tmp = detect_peaks(_ra, mph=0.3 * np.max(_ra))
-        _ra_sh = np.roll(_ra, int(n / 2))
-        extr_tmp = np.unique(np.append(
-            extr_tmp,
-            (detect_peaks(_ra_sh, mph=0.3 * max(_ra_sh)) - int(n / 2)) % n,
-        ))
-        extr_tmp_inv = detect_peaks(_ra_inv, mph=0.3 * np.max(_ra_inv))
-        _ra_inv_sh = np.roll(_ra_inv, int(n / 2))
-        extr_tmp_inv = np.unique(np.append(
-            extr_tmp_inv,
-            (detect_peaks(_ra_inv_sh, mph=0.3 * max(_ra_inv_sh)) - int(n / 2)) % n,
-        ))
-
-        _ra_rolled = np.roll(_ra, offset)
-        extr         = (extr_tmp     + offset) % n
-        extr_inverse = (extr_tmp_inv + offset) % n
-        relative_angles = normalized(_ra_rolled[:, np.newaxis], axis=0).ravel()
-
-        segs = [
-            [0,                int(best_fit[0])],
-            [int(best_fit[0]), int(best_fit[1])],
-            [int(best_fit[1]), int(best_fit[2])],
-            [int(best_fit[2]), int(best_fit[3])],
-        ]
-        tmp_types, no_undefined = [], True
-        for seg in segs:
-            pos_in = sorted(peaks_inside(seg, extr))
-            neg_in = sorted(peaks_inside(seg, extr_inverse))
-            t = type_peak(pos_in, neg_in)
-            tmp_types.append(t)
-            if t == TypeEdge.UNDEFINED:
-                no_undefined = False
-        types_pieces = tmp_types
-        sigma += 1
-        if no_undefined:
-            break
-
-    if not types_pieces:
-        print(f"[corner-detect] FAILED after sigma={sigma-1} (contour len={len(cnt)})")
-        return None, None, None
-
-    if types_pieces[-1] == TypeEdge.UNDEFINED:
-        print("UNDEFINED FOUND - try to continue but something bad happened :(")
-
-    _RECLASS_SIGMA      = 5
-    _RECLASS_MPH        = 0.15
-    _BORDER_FRAC        = 0.15
-    _CORNER_MARGIN_FRAC = 0.10
-
-    _cnt_pts = [c[0] for c in cnt]
-    _la_r  = np.roll(np.array(get_relative_angles(np.array(_cnt_pts), sigma=_RECLASS_SIGMA)), offset)
-    _la_ri = -_la_r
-    _ep = detect_peaks(_la_r,  mph=_RECLASS_MPH * float(np.max(_la_r))  if np.max(_la_r)  > 0 else 1e-6)
-    _en = detect_peaks(_la_ri, mph=_RECLASS_MPH * float(np.max(_la_ri)) if np.max(_la_ri) > 0 else 1e-6)
-    _la_r_norm = normalized(_la_r[:, np.newaxis], axis=0).ravel()
-
-    _segs = [
-        [0,              int(best_fit[0])],
-        [int(best_fit[0]), int(best_fit[1])],
-        [int(best_fit[1]), int(best_fit[2])],
-        [int(best_fit[2]), int(best_fit[3])],
-    ]
-    _seg_amps = [
-        float(np.max(np.abs(_la_r_norm[s[0]:s[1]]))) if s[1] > s[0]
-        else float(np.max(np.abs(_la_r_norm[s[0]:])))
-        for s in _segs
-    ]
-    _flat_thr = _BORDER_FRAC * (max(_seg_amps) if _seg_amps else 1.0)
-
-    _types_low = []
-    for _seg in _segs:
-        _seg_len = max(_seg[1] - _seg[0], 1)
-        _margin  = max(3, int(_CORNER_MARGIN_FRAC * _seg_len))
-        _pi = [p for p in sorted(peaks_inside(_seg, _ep)) if (p - _seg[0]) > _margin and (_seg[1] - p) > _margin]
-        _ni = [p for p in sorted(peaks_inside(_seg, _en)) if (p - _seg[0]) > _margin and (_seg[1] - p) > _margin]
-        _t = type_peak(_pi, _ni)
-        if _t == TypeEdge.UNDEFINED:
-            _sa = _la_r_norm[_seg[0]:_seg[1]] if _seg[1] > _seg[0] else _la_r_norm[_seg[0]:]
-            _t = _reclassify_undefined(_t, _pi, _ni, segment_angles=_sa, flat_threshold=_flat_thr)
-        _types_low.append(_t)
-
-    if TypeEdge.UNDEFINED not in _types_low:
-        types_pieces = _types_low
-    else:
-        segs = [[0, best_fit[0]], [best_fit[0], best_fit[1]],
-                [best_fit[1], best_fit[2]], [best_fit[2], best_fit[3]]]
-        for i, (t, seg) in enumerate(zip(types_pieces, segs)):
-            if t == TypeEdge.UNDEFINED:
-                pos_in = sorted(peaks_inside(seg, extr))
-                neg_in = sorted(peaks_inside(seg, extr_inverse))
-                sa = relative_angles[seg[0]:seg[1]] if seg[1] > seg[0] else relative_angles[seg[0]:]
-                types_pieces[i] = _reclassify_undefined(t, pos_in, neg_in, segment_angles=sa)
-
+    # --- C: Extract the 4 edges between consecutive corners ---
     # corner_indices == best_fit - offset by construction
     best_fit_tmp = corner_indices
     edges = []
@@ -492,8 +422,13 @@ def my_find_corner_signature(cnt, green=False):
     edges.append(np.concatenate((cnt[best_fit_tmp[3]:], cnt[:best_fit_tmp[0]]), axis=0))
     edges = [np.array([x[0] for x in e]) for e in edges]
 
-    types_pieces.append(types_pieces[0])
-    return best_fit, edges, types_pieces[1:]
+    # --- D: Classify each edge by its deviation from the corner-to-corner baseline ---
+    M = cv2.moments(cnt)
+    center = (M['m10'] / M['m00'], M['m01'] / M['m00']) if M['m00'] != 0 \
+        else tuple(np.mean(np.concatenate(edges, axis=0), axis=0))
+    types_pieces = _classify_edges_by_baseline(edges, center)
+
+    return best_fit, edges, types_pieces
 
 
 def export_contours_without_colormatching(

@@ -3,7 +3,9 @@ DEBUG_SHOW_DIAGRAMS = 0  # Shows matplotlib diagrams interactively (requires DEB
 DEBUG_ALT_SOLVER = 0     # Saves debug images for the alternative solver to debug_output/
 DEBUG_PIECE_CENTERS = 1  # Writes piece_centers.json to debug_output/ with each piece's start and end center point (0/0 is top left)
 
-EDGE_OFFSET = 1  # pixels (6 pixels ≈ 1mm) — shifts each edge outward to show the manufacturing tolerance band in debug output
+EDGE_OFFSET = 12  # pixels (6 pixels ≈ 1mm) — shifts each edge outward to show the manufacturing tolerance band in debug output
+
+EDGE_FLAT_FRAC = 0.06  # max |edge deviation| / baseline length to call an edge flat (BORDER)
 
 # Affine calibration: maps warped-image pixel (px, py) → robot mm (rx, ry).
 # Both systems: (0,0) = top-left, X increases right, Y increases down.
