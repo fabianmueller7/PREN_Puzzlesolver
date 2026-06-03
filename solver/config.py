@@ -5,7 +5,7 @@ DEBUG_PIECE_CENTERS = 1  # Writes piece_centers.json to debug_output/ with each 
 
 EDGE_OFFSET = 12  # pixels (6 pixels ≈ 1mm) — shifts each edge outward to show the manufacturing tolerance band in debug output
 
-EDGE_FLAT_FRAC = 0.06  # max |edge deviation| / baseline length to call an edge flat (BORDER)
+EDGE_FLAT_FRAC = 0.13  # max |edge deviation| / baseline length to call an edge flat (BORDER)
 
 # Edge-match scoring. After two edges are aligned (stick_pieces), the overlap
 # residual = mean point-to-point distance between the two aligned curves. It is
@@ -19,6 +19,17 @@ MATCH_CURVATURE_WEIGHT = 1.0  # weight of the curvature-complementarity profile 
 BORDER_BACKTRACK = 1          # 1 = enable DFS backtracking for the border solve
 BORDER_BRANCH = 3             # candidates explored per border slot (top-N by score)
 BORDER_MAX_NODES = 20000      # hard cap on DFS nodes before giving up
+
+# Two HEAD edges (or two HOLE edges) can never physically interlock. Forbid such
+# pairings outright and let backtracking find a valid alternative. Set to 0 to fall
+# back to the old soft-penalty behaviour (tolerates head/hole misclassification by
+# allowing same-type matches as a last resort).
+FORBID_SAME_TYPE_MATCH = 1
+
+# A HEAD/HOLE edge must never face the puzzle exterior — only a flat (BORDER) edge
+# may. Rejects placing/orienting a piece so a connector points out of the puzzle (a
+# head sticking out wrecks the assembly). Set to 0 to disable the check.
+REQUIRE_BORDER_OUTWARD = 1
 
 # Affine calibration: maps warped-image pixel (px, py) → robot mm (rx, ry).
 # Both systems: (0,0) = top-left, X increases right, Y increases down.

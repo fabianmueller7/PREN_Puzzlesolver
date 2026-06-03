@@ -370,8 +370,8 @@ def _type_priority_offset(e1, e2):
     if complementary:
         return 0.0
     if t1 == TypeEdge.UNDEFINED or t2 == TypeEdge.UNDEFINED:
-        return 2000.0   # last resort
-    return 1000.0       # same-type (possible misclassification)
+        return 2000.0   # detection failed — might still be a real complementary edge
+    return 3000.0       # same-type HEAD/HEAD or HOLE/HOLE — can't physically interlock
 
 
 def _offset_shape_for(edge, centroid):

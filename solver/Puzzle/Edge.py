@@ -1,6 +1,7 @@
 import numpy as np
 import cv2
 
+from .. import config
 from .Enums import TypeEdge, Directions
 
 
@@ -71,9 +72,13 @@ class Edge:
         return pts + normals * offset_px
 
     def is_compatible(self, e2, relaxed=False):
-        """BORDER edges cannot match anything. All other pairs are allowed;
-        type priority is encoded in the distance score."""
-        return (
-            self.type  != TypeEdge.BORDER and
-            e2.type    != TypeEdge.BORDER
-        )
+        """BORDER edges never match. Two HEAD edges (or two HOLE edges) cannot
+        physically interlock, so they are rejected when FORBID_SAME_TYPE_MATCH is
+        set; otherwise they are allowed as a last resort and the type priority is
+        encoded in the distance score."""
+        if self.type == TypeEdge.BORDER or e2.type == TypeEdge.BORDER:
+            return False
+        if (config.FORBID_SAME_TYPE_MATCH and self.type == e2.type
+                and self.type in (TypeEdge.HEAD, TypeEdge.HOLE)):
+            return False
+        return True

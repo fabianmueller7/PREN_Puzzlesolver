@@ -15,7 +15,10 @@ class PuzzlePiece:
         self.position = (0, 0)
         self.edges_ = edges
         self.nBorders_ = self.number_of_border()
-        self.type = TypePiece(self.nBorders_)
+        # A real piece has at most 2 flat (BORDER) edges. A lenient flat threshold can
+        # over-classify and report 3–4 borders for a near-rectangular / mis-cornered
+        # piece; clamp so TypePiece() (CENTER/BORDER/ANGLE = 0/1/2) never raises.
+        self.type = TypePiece(min(self.nBorders_, 2))
         self.is_border = self.number_of_border() > 0
         self.rotation_steps = 0  # cumulative 90° CW steps applied during solving
         self.img_centroid = None  # (col, row) from cv2.moments on the filled contour
