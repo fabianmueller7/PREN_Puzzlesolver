@@ -258,6 +258,20 @@ class Puzzle:
         else:
             self.diff = self.add_to_diffs(left_pieces)
 
+        # Border ring: greedy commits a corner too early when pieces look alike and
+        # then dead-ends. DFS with rollback lets a bad commit be undone and retried.
+        if (self.strategy == Strategy.BORDER and config.BORDER_BACKTRACK == 1
+                and len(left_pieces) > 0):
+            self._dfs_nodes = 0
+            if self._solve_dfs(connected_pieces, left_pieces):
+                self.export_pieces(
+                    os.path.join(os.environ["ZOLVER_TEMP_DIR"],
+                                 "stick{0:03d}.png".format(len(self.connected_directions))),
+                )
+                return connected_pieces
+            self.log("Border backtracking found no full solution — using greedy fallback")
+            # DFS restored state to the clean start; greedy loop below runs from there.
+
         while len(left_pieces) > 0:
             self.log(
                 "<--- New match ---> pieces left: ", len(left_pieces),
@@ -270,27 +284,165 @@ class Puzzle:
                 self.log("No match found — solver cannot continue")
                 break
 
-            block_best_p = self.edge_to_piece[block_best_e]
-            best_p       = self.edge_to_piece[best_e]
+            self._apply_placement(block_best_e, best_e, connected_pieces, left_pieces)
 
-            _centroid_bloc = self._piece_centroid(block_best_p) if config.EDGE_OFFSET > 0 else None
-            _centroid_cand = self._piece_centroid(best_p)       if config.EDGE_OFFSET > 0 else None
-            stick_pieces(block_best_e, best_p, best_e,
-                         centroid_bloc=_centroid_bloc, centroid_cand=_centroid_cand)
+        return connected_pieces
 
-            self.update_direction(block_best_e, best_p, best_e)
-            self.connect_piece(self.connected_directions, block_best_p, block_best_e.direction, best_p)
+    def _apply_placement(self, block_best_e, best_e, connected_pieces, left_pieces, export=True):
+        """Commit one piece placement: stick, relabel directions, connect, update diff.
 
-            connected_pieces.append(best_p)
-            del left_pieces[left_pieces.index(best_p)]
+        Shared by the greedy loop and the backtracking DFS. With export=False the
+        per-step debug image is skipped (DFS tries many placements it may roll back).
+        """
+        block_best_p = self.edge_to_piece[block_best_e]
+        best_p       = self.edge_to_piece[best_e]
 
-            self.diff = self.compute_diffs(left_pieces, self.diff, best_p, edge_connected=block_best_e)
+        _centroid_bloc = self._piece_centroid(block_best_p) if config.EDGE_OFFSET > 0 else None
+        _centroid_cand = self._piece_centroid(best_p)       if config.EDGE_OFFSET > 0 else None
+        stick_pieces(block_best_e, best_p, best_e,
+                     centroid_bloc=_centroid_bloc, centroid_cand=_centroid_cand)
 
+        self.update_direction(block_best_e, best_p, best_e)
+        self.connect_piece(self.connected_directions, block_best_p, block_best_e.direction, best_p)
+
+        connected_pieces.append(best_p)
+        del left_pieces[left_pieces.index(best_p)]
+
+        self.diff = self.compute_diffs(left_pieces, self.diff, best_p, edge_connected=block_best_e)
+
+        if export:
             self.export_pieces(
                 os.path.join(os.environ["ZOLVER_TEMP_DIR"], "stick{0:03d}.png".format(len(self.connected_directions))),
             )
 
-        return connected_pieces
+    # ----- Border backtracking (DFS with state rollback) -----------------------
+
+    def _solve_dfs(self, connected_pieces, left_pieces):
+        """Depth-first border assembly with rollback. Returns True iff every
+        border piece in left_pieces gets placed."""
+        if not left_pieces:
+            return True
+        self._dfs_nodes += 1
+        if self._dfs_nodes > config.BORDER_MAX_NODES:
+            return False
+
+        candidates = self._ranked_border_candidates(left_pieces)[:config.BORDER_BRANCH]
+        if not candidates:
+            return False
+
+        snap = self._snapshot(left_pieces, connected_pieces)
+        for _score, block_e, cand_e in candidates:
+            self._apply_placement(block_e, cand_e, connected_pieces, left_pieces, export=False)
+            if self._solve_dfs(connected_pieces, left_pieces):
+                return True
+            self._restore(snap, left_pieces, connected_pieces)
+        return False
+
+    def _ranked_border_candidates(self, left_pieces):
+        """All valid border placements for the current frontier, as a list of
+        (score, block_edge, candidate_edge) sorted ascending by score.
+
+        Mirrors the constraint checks of best_diff()'s BORDER branch but returns
+        every finite-scoring option instead of only the argmin, and de-duplicates
+        on the (block_edge, candidate_edge) pair keeping the best score."""
+        connected_direction = self.connected_directions
+        minX, minY, maxX, maxY = self.extremum
+        occupied = {coord for coord, _ in connected_direction}
+
+        slots = []
+        for x in range(minX, maxX + 1):
+            for y in range(minY, maxY + 1):
+                if (x, y) in occupied:
+                    continue
+                neighbor = [e for e in connected_direction if is_neighbor((x, y), e[0], connected_direction)]
+                if len(neighbor) == 1:
+                    slots.append(((x, y), neighbor[0]))
+                elif len(neighbor) >= 2 and len(left_pieces) == 1:
+                    slots.append(((x, y), neighbor))
+
+        best_for_pair = {}
+        for c, neighbor in slots:
+            neighbors = neighbor if isinstance(neighbor, list) else [neighbor]
+            for p in left_pieces:
+                for _ in range(4):
+                    p.rotate_edges(1)
+                    if p.type == TypePiece.ANGLE and (
+                        not corner_puzzle_alignment(c, self.corner_pos)
+                        or not self.corner_place_fit_size(c)
+                    ):
+                        continue
+                    if p.type == TypePiece.BORDER and self.is_edge_at_corner_place(c):
+                        continue
+
+                    diff_score = 0
+                    last_pair = None, None
+                    for block_c, block_p in neighbors:
+                        direction_exposed = Directions(sub_tuple(c, block_c))
+                        edge_exposed = block_p.edge_in_direction(direction_exposed)
+                        edge = p.edge_in_direction(get_opposite_direction(direction_exposed))
+                        if (edge_exposed.connected or edge.connected
+                                or not edge.is_compatible(edge_exposed)
+                                or not p.is_border_aligned(block_p)):
+                            diff_score = float("inf")
+                            break
+                        diff_score += self.diff.get(edge_exposed, {}).get(edge, float("inf"))
+                        if diff_score == float("inf"):
+                            break
+                        last_pair = edge_exposed, edge
+
+                    if diff_score < float("inf") and last_pair[0] is not None:
+                        key = (id(last_pair[0]), id(last_pair[1]))
+                        if key not in best_for_pair or diff_score < best_for_pair[key][0]:
+                            best_for_pair[key] = (diff_score, last_pair[0], last_pair[1])
+
+        ranked = sorted(best_for_pair.values(), key=lambda t: t[0])
+        return ranked
+
+    def _snapshot(self, left_pieces, connected_pieces):
+        """Capture the full mutable solve state so a DFS branch can be rolled back."""
+        SENT = object()
+        edges = {}
+        pieces = {}
+        for p in self.pieces_:
+            pieces[id(p)] = (p.rotation_steps, getattr(p, "coord", SENT))
+            for e in p.edges_:
+                edges[id(e)] = (np.copy(e.shape), e.direction, e.connected)
+        return {
+            "sent": SENT,
+            "edges": edges,
+            "pieces": pieces,
+            "connected_directions": list(self.connected_directions),
+            "diff": {k: dict(v) for k, v in self.diff.items()},
+            "extremum": self.extremum,
+            "possible_dim": list(self.possible_dim),
+            "corner_pos": list(self.corner_pos),
+            "left": list(left_pieces),
+            "connected": list(connected_pieces),
+        }
+
+    def _restore(self, snap, left_pieces, connected_pieces):
+        """Restore solve state captured by _snapshot (wholesale, identity-stable)."""
+        SENT = snap["sent"]
+        for p in self.pieces_:
+            rot, coord = snap["pieces"][id(p)]
+            p.rotation_steps = rot
+            if coord is SENT:
+                if hasattr(p, "coord"):
+                    delattr(p, "coord")
+            else:
+                p.coord = coord
+            for e in p.edges_:
+                shp, d, conn = snap["edges"][id(e)]
+                e.shape = np.copy(shp)
+                e.direction = d
+                e.connected = conn
+        self.connected_directions = list(snap["connected_directions"])
+        self.diff = {k: dict(v) for k, v in snap["diff"].items()}
+        self.extremum = snap["extremum"]
+        self.possible_dim = list(snap["possible_dim"])
+        self.corner_pos = list(snap["corner_pos"])
+        left_pieces[:] = snap["left"]
+        connected_pieces[:] = snap["connected"]
 
     def compute_diffs(self, left_pieces, diff, new_connected, edge_connected=None):
         if edge_connected is not None:

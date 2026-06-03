@@ -7,6 +7,19 @@ EDGE_OFFSET = 12  # pixels (6 pixels ≈ 1mm) — shifts each edge outward to sh
 
 EDGE_FLAT_FRAC = 0.06  # max |edge deviation| / baseline length to call an edge flat (BORDER)
 
+# Edge-match scoring. After two edges are aligned (stick_pieces), the overlap
+# residual = mean point-to-point distance between the two aligned curves. It is
+# strongly sensitive to *where* a head/hole sits along the edge (lateral position),
+# which the curvature profile alone barely captures. Weight scales px → score units.
+MATCH_RESIDUAL_WEIGHT = 1.0   # weight of the post-alignment overlap residual (px)
+MATCH_CURVATURE_WEIGHT = 1.0  # weight of the curvature-complementarity profile term
+
+# Border backtracking: when the greedy border ring hits a dead-end, roll back the
+# last placements and try the next-best candidate. Caps the search effort.
+BORDER_BACKTRACK = 1          # 1 = enable DFS backtracking for the border solve
+BORDER_BRANCH = 3             # candidates explored per border slot (top-N by score)
+BORDER_MAX_NODES = 20000      # hard cap on DFS nodes before giving up
+
 # Affine calibration: maps warped-image pixel (px, py) → robot mm (rx, ry).
 # Both systems: (0,0) = top-left, X increases right, Y increases down.
 # Output image: 906×648 px (ArUco warp, playing field fills the image exactly).

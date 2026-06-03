@@ -323,6 +323,40 @@ def _edge_curvature_score(pts1, pts2, n_points=50):
     return float(np.mean(np.abs(c1 + c2[::-1])))
 
 
+def _overlap_residual(pts1, pts2, n_points=64):
+    """Mean point-to-point distance between two *already aligned* edge curves.
+
+    stick_pieces() has already translated/rotated the candidate edge onto the
+    placed edge, so a correct interlocking pair overlays almost perfectly and the
+    residual is near zero.  A head/hole that sits at a different lateral position
+    along the edge does NOT overlay — its residual is large — which is exactly the
+    discrimination the curvature profile washes out by averaging.
+
+    Both curves are arc-length resampled to n_points; the candidate corresponds to
+    the placed edge in reverse (stick maps e[-1]->bloc[0]), so we take the better of
+    the forward/reversed correspondence to stay robust to endpoint bookkeeping.
+    """
+    a = _resample_curve(pts1, n_points=n_points)
+    b = _resample_curve(pts2, n_points=n_points)
+    if len(a) < 2 or len(b) < 2:
+        return float("inf")
+    d_rev = float(np.linalg.norm(a - b[::-1], axis=1).mean())
+    d_fwd = float(np.linalg.norm(a - b, axis=1).mean())
+    return min(d_rev, d_fwd)
+
+
+def _geom_match_score(s1, s2, e1, e2):
+    """Combined geometric edge-match score (lower = better).
+
+    Position-sensitive overlap residual + curvature-complementarity + type priority.
+    The type-priority offset (0 / 1000 / 2000) still dominates so HEAD↔HOLE pairings
+    win over same-type/UNDEFINED regardless of the px-scale geometric terms.
+    """
+    return (config.MATCH_RESIDUAL_WEIGHT  * _overlap_residual(s1, s2)
+            + config.MATCH_CURVATURE_WEIGHT * _edge_curvature_score(s1, s2)
+            + _type_priority_offset(e1, e2))
+
+
 def _type_priority_offset(e1, e2):
     """
     Returns a large score penalty for non-ideal type pairings so that
@@ -373,8 +407,8 @@ def real_edge_compute(e1, e2, centroid1=None, centroid2=None):
         if not have_edges_similar_length(tuple(s1[0]), tuple(s1[-1]), tuple(s2[0]), tuple(s2[-1]), 0.15):
             return float("inf")
 
-    # 3. Curvature-profile score + type-priority offset
-    return _edge_curvature_score(s1, s2) + _type_priority_offset(e1, e2)
+    # 3. Position-sensitive overlap residual + curvature profile + type priority
+    return _geom_match_score(s1, s2, e1, e2)
 
 
 def generated_edge_compute(e1, e2, centroid1=None, centroid2=None):
@@ -397,7 +431,7 @@ def generated_edge_compute(e1, e2, centroid1=None, centroid2=None):
         if not have_edges_similar_length(tuple(s1[0]), tuple(s1[-1]), tuple(s2[0]), tuple(s2[-1]), 0.15):
             return float("inf")
 
-    return _edge_curvature_score(s1, s2) + _type_priority_offset(e1, e2)
+    return _geom_match_score(s1, s2, e1, e2)
 
 def _resample_curve(points, n_points=100):
     """
