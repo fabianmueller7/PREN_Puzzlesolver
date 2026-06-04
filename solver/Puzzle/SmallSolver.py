@@ -107,10 +107,29 @@ def _uf_find(parent, i):
     return i
 
 
-def _grid_merge(seam, pieces, parent, members, cell, off):
+def _candidate_dims(n, nC, nE, nX):
+    """Rectangle dimensions (w<=h, both >=2) of n pieces whose expected corner/edge/center
+    counts match the actual classification. A w x h grid has 4 corners, 2(w-2)+2(h-2) edges,
+    (w-2)(h-2) centers. Returns sorted (w,h) tuples (e.g. 4 -> [(2,2)], 6 -> [(2,3)])."""
+    out = []
+    for w in range(2, int(n ** 0.5) + 1):
+        if n % w:
+            continue
+        h = n // w
+        if (4, 2 * (w - 2) + 2 * (h - 2), (w - 2) * (h - 2)) == (nC, nE, nX):
+            out.append((w, h))
+    return out
+
+
+def _fits_any(er, ec, cands):
+    """Does a partial bbox of extents (er, ec) still fit inside some candidate rectangle?"""
+    return any((er <= w and ec <= h) or (er <= h and ec <= w) for (w, h) in cands)
+
+
+def _grid_merge(seam, pieces, parent, members, cell, off, cands):
     """Embed the smaller cluster into the larger's grid frame via this seam. Accept only if
-    grid-legal: no cell collision, 3x2/2x3 footprint, and no BORDER edge facing an occupied
-    cell. Mutates (cell/off/parent/members) and returns True on accept; no-op + False else."""
+    grid-legal: no cell collision, bbox still fits a candidate rectangle, and no BORDER edge
+    facing an occupied cell. Mutates (cell/off/parent/members), returns True on accept."""
     ri, rj = _uf_find(parent, seam['pi']), _uf_find(parent, seam['pj'])
     if ri == rj:
         return False
@@ -139,7 +158,7 @@ def _grid_merge(seam, pieces, parent, members, cell, off):
     rows = [c[0] for c in occupied]
     cols = [c[1] for c in occupied]
     er, ec = max(rows) - min(rows) + 1, max(cols) - min(cols) + 1
-    if er > 3 or ec > 3 or (er > 2 and ec > 2):
+    if not _fits_any(er, ec, cands):
         return False
 
     comb_off = {k: off[k] for k in members[fixed_root]}
@@ -170,13 +189,15 @@ def _restore_grid(snap, parent, members, cell, off):
     off.clear(); off.update(snap[3])
 
 
-def _structure_ok(pieces, cell, off):
-    """3x2/2x3 footprint where every CONNECTOR edge faces an occupied neighbour and every
-    BORDER edge faces empty space (corners at grid corners, edges on the hull)."""
+def _structure_ok(pieces, cell, off, cands):
+    """A candidate-rectangle footprint where every CONNECTOR edge faces an occupied
+    neighbour and every BORDER edge faces empty space (corners at grid corners, edges on
+    the hull, centers interior)."""
     n = len(pieces)
     rows = [cell[i][0] for i in range(n)]
     cols = [cell[i][1] for i in range(n)]
-    if {max(rows) - min(rows) + 1, max(cols) - min(cols) + 1} != {2, 3}:
+    er, ec = max(rows) - min(rows) + 1, max(cols) - min(cols) + 1
+    if (min(er, ec), max(er, ec)) not in cands:
         return False
     occ = {cell[i] for i in range(n)}
     for i, p in enumerate(pieces):
@@ -190,13 +211,13 @@ def _structure_ok(pieces, cell, off):
     return True
 
 
-def _dfs(seams, si, pieces, parent, members, cell, off, acc_cost, budget, best):
+def _dfs(seams, si, pieces, parent, members, cell, off, acc_cost, budget, best, cands):
     """Search structurally-valid complete assemblies, keeping the MIN-TOTAL-COST one in
     `best`. Per-seam shape scores can't separate true/false matches for these pieces, so
     we let the scores decide globally: a locally-cheap false pairing can't win if it forces
     a higher-total or structurally-invalid whole. Branch-and-bound on accumulated cost."""
     if len(members) == 1:
-        if acc_cost < best['cost'] and _structure_ok(pieces, cell, off):
+        if acc_cost < best['cost'] and _structure_ok(pieces, cell, off, cands):
             best['cost'] = acc_cost
             best['cell'] = dict(cell)
             best['off'] = dict(off)
@@ -211,9 +232,9 @@ def _dfs(seams, si, pieces, parent, members, cell, off, acc_cost, budget, best):
         if _uf_find(parent, s['pi']) == _uf_find(parent, s['pj']):
             continue
         snap = _snap_grid(parent, members, cell, off)
-        if _grid_merge(s, pieces, parent, members, cell, off):
+        if _grid_merge(s, pieces, parent, members, cell, off, cands):
             _dfs(seams, idx + 1, pieces, parent, members, cell, off,
-                 acc_cost + s['cost'], budget, best)
+                 acc_cost + s['cost'], budget, best, cands)
             _restore_grid(snap, parent, members, cell, off)
     return
 
@@ -300,19 +321,21 @@ def _geometric_layout(pieces, cell, off):
 
 
 def solve_small(pieces, green=False, log=print):
-    """Assemble a <=6-piece (4 corner + 2 edge) puzzle by best-first agglomerative merging
-    with a grid-embedding validation guard + DFS backtracking. Mutates piece shapes into the
-    solved layout and sets p.coord=(row,col). Returns True on success; else restores shapes."""
-    corners = [p for p in pieces if p.nBorders_ == 2]
-    edges = [p for p in pieces if p.nBorders_ == 1]
-    centers = [p for p in pieces if p.nBorders_ == 0]
-    if len(pieces) > 6 or len(corners) != 4 or len(edges) != 2 or centers:
-        log(f"[small] not applicable: {len(corners)} corners / {len(edges)} edges / "
-            f"{len(centers)} centers (need 4/2/0)")
+    """Assemble a small (4-9 piece, w x h >=2 grid) puzzle by best-first agglomerative
+    merging with a grid-embedding validation guard, choosing the min-total-cost valid whole.
+    Mutates piece shapes into the solved layout and sets p.coord=(row,col); else restores."""
+    n = len(pieces)
+    nC = sum(1 for p in pieces if p.nBorders_ == 2)
+    nE = sum(1 for p in pieces if p.nBorders_ == 1)
+    nX = sum(1 for p in pieces if p.nBorders_ == 0)
+    cands = _candidate_dims(n, nC, nE, nX) if 4 <= n <= 9 else []
+    if not cands:
+        log(f"[small] not applicable: {n} pieces, {nC} corners / {nE} edges / {nX} centers "
+            f"— no rectangle matches this classification")
         return False
+    log(f"[small] candidate grid dim(s): {cands}")
 
     orig = _snapshot(pieces)
-    n = len(pieces)
     parent = list(range(n))
     members = {i: [i] for i in range(n)}
     cell = {i: (0, 0) for i in range(n)}     # grid cell per piece (cluster-local frame)
@@ -325,7 +348,7 @@ def solve_small(pieces, green=False, log=print):
     # Find the minimum-total-cost structurally-valid 2x3/3x2 assembly (global use of the
     # match scores; per-seam discrimination is too weak for these pieces).
     best = {'cost': float('inf'), 'cell': None, 'off': None}
-    _dfs(seams, 0, pieces, parent, members, cell, off, 0.0, [200000], best)
+    _dfs(seams, 0, pieces, parent, members, cell, off, 0.0, [200000], best, cands)
 
     if best['cell'] is None:
         _restore(pieces, orig)
