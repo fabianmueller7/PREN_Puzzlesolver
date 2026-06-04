@@ -219,25 +219,84 @@ def _dfs(seams, si, pieces, parent, members, cell, off, acc_cost, budget, best):
 
 
 # --------------------------------------------------------------------------- #
-# Materialise geometry from the grid embedding (stick along grid adjacency)
+# Materialise geometry from the grid embedding (axis-lock + least-squares place)
 # --------------------------------------------------------------------------- #
+_GLOBAL = {'N': np.array([0.0, -1.0]), 'S': np.array([0.0, 1.0]),
+           'E': np.array([1.0, 0.0]), 'W': np.array([-1.0, 0.0])}   # outward (x, y), y down
+
+
+def _apex_point(edge):
+    """The connector apex (tab/hole centre) — point of max perpendicular deviation from
+    the chord; the natural mating point of a seam, valid for any edge length (T-junctions)."""
+    pts = np.asarray(edge.shape, dtype=float)
+    a, b = pts[0], pts[-1]
+    ch = b - a
+    L = np.linalg.norm(ch)
+    if L < 1e-6 or len(pts) < 3:
+        return (a + b) / 2.0
+    u = ch / L
+    nrm = np.array([-u[1], u[0]])
+    dev = (pts - a) @ nrm
+    return pts[int(np.argmax(np.abs(dev)))]
+
+
+def _axis_lock(piece, off_i):
+    """Rotate a piece (about its centroid) so its edges align to the global axes, using the
+    grid orientation `off_i` (edge k should face _GLOBAL[_dir_of(k, off_i)]). Removes the
+    per-piece tilt that made single-seam sticking drift."""
+    c = _centroid(piece)
+    sin_sum = cos_sum = 0.0
+    for k, e in enumerate(piece.edges_):
+        cur = np.asarray(e.shape, dtype=float).mean(0) - c
+        n = np.linalg.norm(cur)
+        if n < 1e-6:
+            continue
+        cur /= n
+        tgt = _GLOBAL[_dir_of(k, off_i)]
+        ang = np.arctan2(tgt[1], tgt[0]) - np.arctan2(cur[1], cur[0])
+        sin_sum += np.sin(ang)
+        cos_sum += np.cos(ang)
+    a = np.arctan2(sin_sum, cos_sum)
+    R = np.array([[np.cos(a), -np.sin(a)], [np.sin(a), np.cos(a)]])
+    for e in piece.edges_:
+        e.shape = np.round((np.asarray(e.shape, dtype=float) - c) @ R.T + c).astype(int)
+
+
 def _geometric_layout(pieces, cell, off):
-    cellmap = {cell[i]: i for i in range(len(pieces))}
-    anchor = min(range(len(pieces)), key=lambda i: (cell[i][0], cell[i][1]))
-    placed, queue = {anchor}, [anchor]
-    while queue:
-        pi = queue.pop(0)
+    """Clean, drift-free placement from the exact grid embedding: axis-lock every piece,
+    then least-squares translate (orientation fixed) so each seam's connector apexes
+    coincide. Anchor piece 0. x and y decouple."""
+    n = len(pieces)
+    for i in range(n):
+        _axis_lock(pieces[i], off[i])
+
+    # Seam constraints: for grid-adjacent (i,j), apex_i + t_i == apex_j + t_j.
+    cellmap = {cell[i]: i for i in range(n)}
+    cons = []
+    for i in range(n):
         for k in range(4):
-            d = _dir_of(k, off[pi])
-            nb = (cell[pi][0] + _STEP[d][0], cell[pi][1] + _STEP[d][1])
-            nj = cellmap.get(nb)
-            if nj is None or nj in placed:
+            d = _dir_of(k, off[i])
+            j = cellmap.get((cell[i][0] + _STEP[d][0], cell[i][1] + _STEP[d][1]))
+            if j is None or j <= i:
                 continue
-            k2 = next(kk for kk in range(4) if _dir_of(kk, off[nj]) == _OPP[d])
-            stick_pieces(pieces[pi].edges_[k], pieces[nj], pieces[nj].edges_[k2],
-                         centroid_bloc=_centroid(pieces[pi]), centroid_cand=_centroid(pieces[nj]))
-            placed.add(nj)
-            queue.append(nj)
+            k2 = next(kk for kk in range(4) if _dir_of(kk, off[j]) == _OPP[d])
+            cons.append((i, _apex_point(pieces[i].edges_[k]),
+                         j, _apex_point(pieces[j].edges_[k2])))
+
+    sol = {}
+    for axis in (0, 1):
+        A = np.zeros((len(cons) + 1, n))
+        rhs = np.zeros(len(cons) + 1)
+        for r, (i, ai, j, aj) in enumerate(cons):
+            A[r, i] += 1.0
+            A[r, j] -= 1.0
+            rhs[r] = aj[axis] - ai[axis]
+        A[-1, 0] = 1.0                                   # anchor piece 0
+        sol[axis] = np.linalg.lstsq(A, rhs, rcond=None)[0]
+    for i in range(n):
+        t = np.array([sol[0][i], sol[1][i]])
+        for e in pieces[i].edges_:
+            e.shape = np.round(np.asarray(e.shape, dtype=float) + t).astype(int)
 
 
 def solve_small(pieces, green=False, log=print):
