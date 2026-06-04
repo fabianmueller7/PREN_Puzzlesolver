@@ -264,7 +264,7 @@ class Viewer(QMainWindow):
             triggered=self.displayNext,
         )
         self.solveAct = QAction(
-            "&Solve puzzle",
+            "&Solve puzzle (greedy / grid)",
             self,
             shortcut="Ctrl+S",
             enabled=False,

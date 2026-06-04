@@ -139,7 +139,9 @@ def solve_puzzle(image_path: str, green_screen: bool = False) -> list:
     from solver.Puzzle.Puzzle import Puzzle
 
     puzzle = Puzzle(image_path, green_screen=green_screen)
-    puzzle.solve_puzzle()
+    # Prefer the dedicated small (agglomerative) solver; fall back to the grid solver when
+    # not applicable. Both emit piece_centers.json.
+    puzzle.solve_puzzle_small(fallback=True)
 
     centers_path = os.path.join(os.environ["ZOLVER_TEMP_DIR"], "piece_centers.json")
     with open(centers_path) as f:

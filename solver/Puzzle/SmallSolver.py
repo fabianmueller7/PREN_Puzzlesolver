@@ -330,8 +330,13 @@ def solve_small(pieces, green=False, log=print):
     nX = sum(1 for p in pieces if p.nBorders_ == 0)
     cands = _candidate_dims(n, nC, nE, nX) if 4 <= n <= 9 else []
     if not cands:
+        nOver = sum(1 for p in pieces if p.nBorders_ > 2)
         log(f"[small] not applicable: {n} pieces, {nC} corners / {nE} edges / {nX} centers "
             f"— no rectangle matches this classification")
+        log(f"[small] per-piece border counts: {[p.nBorders_ for p in pieces]}")
+        if nOver:
+            log(f"[small] {nOver} piece(s) have >2 flat edges — upstream edge classification "
+                f"over-flagged connectors as BORDER (a real piece has at most 2 flat sides).")
         return False
     log(f"[small] candidate grid dim(s): {cands}")
 

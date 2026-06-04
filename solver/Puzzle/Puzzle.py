@@ -65,17 +65,29 @@ class Puzzle:
         )
         self.extremum = (-1, -1, 1, 1)
 
-    def solve_puzzle_small(self):
-        """Solve with the dedicated <=6-piece agglomerative solver (SmallSolver) and render
-        the result into the viewer. Returns True on success, False if not applicable."""
+    def solve_puzzle_small(self, fallback=False):
+        """Solve with the dedicated small (agglomerative) solver and render the result.
+        When `fallback` is True (used by --prod), fall back to the grid solver if the small
+        solver isn't applicable (e.g. the upstream classifier mis-flagged edges so no
+        rectangle matches). In the GUI the small action runs with fallback=False so the two
+        solvers stay individually selectable for debugging. solve_small leaves piece shapes
+        untouched on failure, so the fallback runs clean."""
         self.log(">>> START small (agglomerative) solve")
         if not self.pieces_:
             self.log("ERROR: No pieces detected.")
             return False
 
-        ok = solve_small(self.pieces_, green=self.green_, log=self.log)
-        if not ok:
-            self.log(">>> small solve not applicable / no valid assembly")
+        snaps = self._start_snapshots(self.pieces_) if config.DEBUG_PIECE_CENTERS == 1 else None
+
+        if not solve_small(self.pieces_, green=self.green_, log=self.log):
+            if not fallback:
+                self.log(">>> small solve not applicable (use the grid solver for this one)")
+                return False
+            self.log(">>> small solve not applicable — falling back to grid solver")
+            self.solve_puzzle()
+            out = os.path.join(os.environ["ZOLVER_TEMP_DIR"], "stick.png")
+            if self.viewer is not None and os.path.exists(out):
+                self.viewer.addImage("Grid-solver result (fallback)", out)
             return False
 
         self.translate_puzzle()
@@ -83,6 +95,8 @@ class Puzzle:
         self.export_pieces(out, "Small-solver result", display=False)
         if self.viewer is not None:
             self.viewer.addImage("Small-solver result", out)
+        if snaps is not None:
+            self._write_piece_centers(*snaps)
         self.log(">>> small solve done")
         return True
 
@@ -95,17 +109,9 @@ class Puzzle:
             return
 
         if config.DEBUG_PIECE_CENTERS == 1:
-            _start_centers = {
-                id(p): p.img_centroid if p.img_centroid is not None else self._piece_centroid(p)
-                for p in self.pieces_
-            }
-            # Per-edge shape snapshots captured BEFORE solving (shapes still in
-            # original image coords). The Kabsch rotation estimate compares these
-            # against the final solved e.shape, which is a rigid transform of them.
-            _start_edge_shapes = {
-                id(p): {id(e): np.asarray(e.shape, dtype=float).copy() for e in p.edges_}
-                for p in self.pieces_
-            }
+            # Snapshots BEFORE solving (shapes still in original image coords); used to
+            # recover per-piece rotation by Kabsch against the final solved shapes.
+            _start_centers, _start_edge_shapes = self._start_snapshots(self.pieces_)
 
         connected_pieces = []
         border_pieces = self.border_pieces.copy()
@@ -159,98 +165,98 @@ class Puzzle:
         )
 
         if config.DEBUG_PIECE_CENTERS == 1:
-            import json
-            import math as _math
+            self._write_piece_centers(_start_centers, _start_edge_shapes)
 
-            # Grid dimensions from piece coords: p.coord = (gn, ge) where gn=north, ge=east.
-            # Start piece (SW corner) is at (0, 0); puzzle grows N and E from there.
-            coords = [p.coord for p in self.pieces_ if hasattr(p, "coord")]
-            grid_H = (max(c[0] for c in coords) + 1) if coords else 1  # north axis
-            grid_W = (max(c[1] for c in coords) + 1) if coords else 1  # east axis
+    @staticmethod
+    def _start_snapshots(pieces):
+        """Capture per-piece start centre + per-edge pre-solve shapes, for the robot output
+        (rotation is recovered by Kabsch comparing these against the solved shapes)."""
+        start_centers = {
+            id(p): p.img_centroid if p.img_centroid is not None else Puzzle._piece_centroid(p)
+            for p in pieces
+        }
+        start_edge_shapes = {
+            id(p): {id(e): np.asarray(e.shape, dtype=float).copy() for e in p.edges_}
+            for p in pieces
+        }
+        return start_centers, start_edge_shapes
 
-            def _kabsch_angle_deg(src_pts, dst_pts):
-                """Net rotation (degrees) of the rigid transform mapping corresponded
-                point cloud src_pts -> dst_pts. Points are (N,2) in image coords, same order.
-                Edge shapes are only ever rigidly transformed during solving, so the source
-                and solved point clouds correspond exactly and SVD recovers the rotation.
-                Returns angle in (-180,180] or None."""
-                src = np.asarray(src_pts, dtype=float)
-                dst = np.asarray(dst_pts, dtype=float)
-                if len(src) < 2 or len(src) != len(dst):
-                    return None
-                src_c = src - src.mean(axis=0)
-                dst_c = dst - dst.mean(axis=0)
-                H = src_c.T @ dst_c                      # 2x2 covariance
-                U, S, Vt = np.linalg.svd(H)
-                d = np.sign(np.linalg.det(Vt.T @ U.T))   # reflection guard
-                R = Vt.T @ np.diag([1.0, d]) @ U.T
-                return _math.degrees(_math.atan2(R[1, 0], R[0, 0]))
+    def _write_piece_centers(self, start_centers, start_edge_shapes):
+        """Write piece_centers.json (robot output): per-piece start/end centres (px + robot
+        mm) and rotation (deg). Shared by the grid solver and the small/agglomerative solver.
+        Rotation is the Kabsch angle from pre-solve to solved edge points (both solvers only
+        rigidly transform shapes, so this is exact regardless of coord convention)."""
+        import json
+        import math as _math
 
-            # Per-piece rotation via Kabsch/SVD on corresponded edge points.
-            # _start_edge_shapes holds each edge's pre-solve points; e.shape holds the
-            # final solved points (same points, same order, rigidly transformed).
-            rotation_degs = []
-            for i, p in enumerate(self.pieces_):
-                src_list, dst_list = [], []
-                src_edges = _start_edge_shapes.get(id(p), {})
-                for e in p.edges_:
-                    src_e = src_edges.get(id(e))
-                    if src_e is None:
-                        continue
-                    dst_e = np.asarray(e.shape, dtype=float)
-                    if len(dst_e) < 2 or len(dst_e) != len(src_e):
-                        continue
-                    src_list.append(np.asarray(src_e, dtype=float))
-                    dst_list.append(dst_e)
-                rdeg = 0.0
-                if src_list:
-                    ang = _kabsch_angle_deg(np.concatenate(src_list), np.concatenate(dst_list))
-                    if ang is not None:
-                        deg = ang + config.PUZZLE_TARGET_ROTATION_DEG
-                        if hasattr(p, "coord"):
-                            gn, ge = p.coord
-                            deg += config.COLUMN_ROTATION_CORRECTIONS.get(ge, 0.0)
-                            deg += config.ROW_ROTATION_CORRECTIONS.get(gn, 0.0)
-                        deg = ((deg + 180) % 360) - 180
-                        rdeg = round(deg, 1)
-                rotation_degs.append(rdeg)
+        # p.coord = (gn, ge): gn=north, ge=east; start piece (SW corner) at (0,0).
+        coords = [p.coord for p in self.pieces_ if hasattr(p, "coord")]
+        grid_H = (max(c[0] for c in coords) + 1) if coords else 1
+        grid_W = (max(c[1] for c in coords) + 1) if coords else 1
 
-            # Centroids from the solved layout (for debug display coords).
-            ec_list = [self._piece_centroid(p) for p in self.pieces_]
+        def _kabsch_angle_deg(src_pts, dst_pts):
+            src = np.asarray(src_pts, dtype=float)
+            dst = np.asarray(dst_pts, dtype=float)
+            if len(src) < 2 or len(src) != len(dst):
+                return None
+            src_c = src - src.mean(axis=0)
+            dst_c = dst - dst.mean(axis=0)
+            H = src_c.T @ dst_c
+            U, S, Vt = np.linalg.svd(H)
+            d = np.sign(np.linalg.det(Vt.T @ U.T))   # reflection guard
+            R = Vt.T @ np.diag([1.0, d]) @ U.T
+            return _math.degrees(_math.atan2(R[1, 0], R[0, 0]))
 
-            records = []
-            for i, p in enumerate(self.pieces_):
-                sc = _start_centers[id(p)]
-                ec = ec_list[i]
-                robot_start = config.pixel_to_robot(sc[0], sc[1])
+        rotation_degs = []
+        for p in self.pieces_:
+            src_list, dst_list = [], []
+            src_edges = start_edge_shapes.get(id(p), {})
+            for e in p.edges_:
+                src_e = src_edges.get(id(e))
+                if src_e is None:
+                    continue
+                dst_e = np.asarray(e.shape, dtype=float)
+                if len(dst_e) < 2 or len(dst_e) != len(src_e):
+                    continue
+                src_list.append(np.asarray(src_e, dtype=float))
+                dst_list.append(dst_e)
+            rdeg = 0.0
+            if src_list:
+                ang = _kabsch_angle_deg(np.concatenate(src_list), np.concatenate(dst_list))
+                if ang is not None:
+                    deg = ang + config.PUZZLE_TARGET_ROTATION_DEG
+                    if hasattr(p, "coord"):
+                        gn, ge = p.coord
+                        deg += config.COLUMN_ROTATION_CORRECTIONS.get(ge, 0.0)
+                        deg += config.ROW_ROTATION_CORRECTIONS.get(gn, 0.0)
+                    deg = ((deg + 180) % 360) - 180
+                    rdeg = round(deg, 1)
+            rotation_degs.append(rdeg)
 
-                # Map solved grid coordinate → target field robot mm.
-                if hasattr(p, "coord"):
-                    gn, ge = p.coord   # (north, east)
-                    robot_end = list(config.grid_to_robot(ge, gn, grid_W, grid_H))
-                else:
-                    robot_end = list(robot_start)
-
-                rotation_deg = rotation_degs[i]
-
-                records.append({
-                    "piece_index": i,
-                    "grid_coord": list(p.coord) if hasattr(p, "coord") else None,
-                    "start_center_px": [int(sc[0]), int(sc[1])],
-                    "start_center_robot_mm": list(robot_start),
-                    "end_center_px": [int(ec[0]), int(ec[1])] if ec else None,
-                    "end_center_robot_mm": robot_end,
-                    "rotation_deg": rotation_deg,
-                })
-            out_path = os.path.join(os.environ.get("ZOLVER_TEMP_DIR", "debug_output"), "piece_centers.json")
-            with open(out_path, "w") as f:
-                json.dump(records, f, indent=2)
-            self.log("Piece centers saved to", out_path)
-
-            self.export_pieces(
-                os.path.join(os.environ["ZOLVER_TEMP_DIR"], "stick.png"),
-                display=False,
-            )
+        ec_list = [self._piece_centroid(p) for p in self.pieces_]
+        records = []
+        for i, p in enumerate(self.pieces_):
+            sc = start_centers[id(p)]
+            ec = ec_list[i]
+            robot_start = config.pixel_to_robot(sc[0], sc[1])
+            if hasattr(p, "coord"):
+                gn, ge = p.coord
+                robot_end = list(config.grid_to_robot(ge, gn, grid_W, grid_H))
+            else:
+                robot_end = list(robot_start)
+            records.append({
+                "piece_index": i,
+                "grid_coord": list(p.coord) if hasattr(p, "coord") else None,
+                "start_center_px": [int(sc[0]), int(sc[1])],
+                "start_center_robot_mm": list(robot_start),
+                "end_center_px": [int(ec[0]), int(ec[1])] if ec else None,
+                "end_center_robot_mm": robot_end,
+                "rotation_deg": rotation_degs[i],
+            })
+        out_path = os.path.join(os.environ.get("ZOLVER_TEMP_DIR", "debug_output"), "piece_centers.json")
+        with open(out_path, "w") as f:
+            json.dump(records, f, indent=2)
+        self.log("Piece centers saved to", out_path)
 
     def get_bbox(self):
         bboxes = [p.get_bbox() for p in self.pieces_]
