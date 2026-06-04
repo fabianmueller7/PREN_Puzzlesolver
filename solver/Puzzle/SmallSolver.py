@@ -190,24 +190,32 @@ def _structure_ok(pieces, cell, off):
     return True
 
 
-def _dfs(seams, si, pieces, parent, members, cell, off, budget):
-    """Best-first DFS: try seams in cost order, merge with rollback, until one grid-legal
-    cluster covering all pieces passes the full structural check."""
+def _dfs(seams, si, pieces, parent, members, cell, off, acc_cost, budget, best):
+    """Search structurally-valid complete assemblies, keeping the MIN-TOTAL-COST one in
+    `best`. Per-seam shape scores can't separate true/false matches for these pieces, so
+    we let the scores decide globally: a locally-cheap false pairing can't win if it forces
+    a higher-total or structurally-invalid whole. Branch-and-bound on accumulated cost."""
     if len(members) == 1:
-        return _structure_ok(pieces, cell, off)
+        if acc_cost < best['cost'] and _structure_ok(pieces, cell, off):
+            best['cost'] = acc_cost
+            best['cell'] = dict(cell)
+            best['off'] = dict(off)
+        return
+    if acc_cost >= best['cost']:        # bound: can't beat the incumbent
+        return
     budget[0] -= 1
     if budget[0] < 0:
-        return False
+        return
     for idx in range(si, len(seams)):
         s = seams[idx]
         if _uf_find(parent, s['pi']) == _uf_find(parent, s['pj']):
             continue
         snap = _snap_grid(parent, members, cell, off)
         if _grid_merge(s, pieces, parent, members, cell, off):
-            if _dfs(seams, idx + 1, pieces, parent, members, cell, off, budget):
-                return True
+            _dfs(seams, idx + 1, pieces, parent, members, cell, off,
+                 acc_cost + s['cost'], budget, best)
             _restore_grid(snap, parent, members, cell, off)
-    return False
+    return
 
 
 # --------------------------------------------------------------------------- #
@@ -255,10 +263,18 @@ def solve_small(pieces, green=False, log=print):
     log("[small] {} candidate seams; best costs: {}".format(
         len(seams), ", ".join(f"{s['cost']:.0f}" for s in seams[:8])))
 
-    if not _dfs(seams, 0, pieces, parent, members, cell, off, [20000]):
+    # Find the minimum-total-cost structurally-valid 2x3/3x2 assembly (global use of the
+    # match scores; per-seam discrimination is too weak for these pieces).
+    best = {'cost': float('inf'), 'cell': None, 'off': None}
+    _dfs(seams, 0, pieces, parent, members, cell, off, 0.0, [200000], best)
+
+    if best['cell'] is None:
         _restore(pieces, orig)
         log("[small] no valid grid assembly found")
         return False
+    cell.clear(); cell.update(best['cell'])
+    off.clear(); off.update(best['off'])
+    log(f"[small] best valid assembly total cost = {best['cost']:.0f}")
 
     rows = [cell[i][0] for i in range(n)]
     cols = [cell[i][1] for i in range(n)]
