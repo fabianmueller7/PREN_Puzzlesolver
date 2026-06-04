@@ -60,6 +60,7 @@ class Viewer(QMainWindow):
 
             self.solveAct.setEnabled(True)
             self.solveGreenAct.setEnabled(True)
+            self.solveSmallAct.setEnabled(True)
 
             self.addImage("Base image", fileName, addMenu=True)
 
@@ -178,6 +179,26 @@ class Viewer(QMainWindow):
 
         self.thread.start()
 
+    def solveSmall(self):
+        """
+        Callback to start resolution with the dedicated <=6-piece agglomerative solver
+        """
+        print("Starting Solver Thread (small/agglomerative)...")
+        self.solveAct.setEnabled(False)
+        self.solveGreenAct.setEnabled(False)
+        self.solveSmallAct.setEnabled(False)
+
+        self.solveMenu = QMenu("&Zolver is running", self)
+        self.menuBar().addMenu(self.solveMenu)
+
+        self.thread = SolveThread(self.imgs[0], self, green_screen=False, small=True)
+
+        self.thread.logAdded.connect(self.addLog, Qt.QueuedConnection)
+        self.thread.imageAdded.connect(self.addImage, Qt.QueuedConnection)
+        self.thread.finished.connect(self.endSolve, Qt.QueuedConnection)
+
+        self.thread.start()
+
     def endSolve(self):
         """
         Callback at the end of the solving
@@ -256,6 +277,13 @@ class Viewer(QMainWindow):
             enabled=False,
             triggered=self.solveGreen,
         )
+        self.solveSmallAct = QAction(
+            "Solve puzzle (S&mall / agglomerative)",
+            self,
+            shortcut="Ctrl+M",
+            enabled=False,
+            triggered=self.solveSmall,
+        )
         self.logsAct = QAction(
             "&Logs", self, shortcut="Ctrl+L", triggered=self.showLogs
         )
@@ -268,6 +296,7 @@ class Viewer(QMainWindow):
         self.fileMenu.addAction(self.openAct)
         self.fileMenu.addAction(self.solveAct)
         self.fileMenu.addAction(self.solveGreenAct)
+        self.fileMenu.addAction(self.solveSmallAct)
         self.fileMenu.addAction(self.logsAct)
         self.fileMenu.addSeparator()
         self.fileMenu.addAction(self.exitAct)

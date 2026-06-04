@@ -7,6 +7,7 @@ import math
 from .Distance import real_edge_compute, generated_edge_compute
 from .Extractor import Extractor, show_image
 from .Mover import stick_pieces
+from .SmallSolver import solve_small
 from .utils import rotate
 
 from .Enums import (
@@ -63,6 +64,27 @@ class Puzzle:
             len(self.pieces_), len(self.border_pieces)
         )
         self.extremum = (-1, -1, 1, 1)
+
+    def solve_puzzle_small(self):
+        """Solve with the dedicated <=6-piece agglomerative solver (SmallSolver) and render
+        the result into the viewer. Returns True on success, False if not applicable."""
+        self.log(">>> START small (agglomerative) solve")
+        if not self.pieces_:
+            self.log("ERROR: No pieces detected.")
+            return False
+
+        ok = solve_small(self.pieces_, green=self.green_, log=self.log)
+        if not ok:
+            self.log(">>> small solve not applicable / no valid assembly")
+            return False
+
+        self.translate_puzzle()
+        out = os.path.join(os.environ["ZOLVER_TEMP_DIR"], "stick.png")
+        self.export_pieces(out, "Small-solver result", display=False)
+        if self.viewer is not None:
+            self.viewer.addImage("Small-solver result", out)
+        self.log(">>> small solve done")
+        return True
 
     def solve_puzzle(self):
         self.log(">>> START solving puzzle")
