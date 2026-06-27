@@ -42,8 +42,10 @@ def main():
     try:
         robot.motors_enable()
         robot.gripper_up()
-        robot.reset_rotation()  # current position is now 0 deg
-        print(f"Rotation zeroed. Testing angles: {angles}")
+        print("Homing rotation axis...")
+        robot.home_a()           # drive to mechanical endstop
+        robot.reset_rotation()   # declare homed position as 0 deg
+        print(f"Rotation homed and zeroed. Testing angles: {angles}")
 
         for angle in angles:
             print(f"-> rotating to {angle} deg")
