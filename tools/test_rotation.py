@@ -41,7 +41,10 @@ def main():
     robot = PicoInterface(port=PORT)
     try:
         robot.motors_enable()
+        robot.home_z()
         robot.gripper_up()
+        robot.home_x()
+        robot.home_y()
         print("Homing rotation axis...")
         robot.home_a()           # drive to mechanical endstop
         robot.reset_rotation()   # declare homed position as 0 deg
