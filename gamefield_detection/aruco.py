@@ -18,6 +18,78 @@ def _save_failed_debug(frame, corners, ids, rejected, debug_dir):
     print(f"[ArUco] failed-detection debug saved to {debug_dir}/capture_aruco_failed.jpg")
 
 
+def _build_detector():
+    """Create an ArucoDetector tuned for uneven / glary lighting.
+
+    The default adaptive-threshold window range is narrow (3..23), which fails
+    when one corner of the field is darker (shadow) or brighter (glare) than the
+    rest. Widening the window range lets the binarizer adapt locally, and
+    subpixel corner refinement keeps the warp accurate.
+    """
+    import cv2.aruco as aruco
+
+    dictionary = aruco.getPredefinedDictionary(aruco.DICT_4X4_50)
+    params = aruco.DetectorParameters()
+    params.detectInvertedMarker = True
+    # Adapt the binarization threshold over a much wider range of window sizes so
+    # a shadowed/over-lit corner still produces a clean black/white tag.
+    params.adaptiveThreshWinSizeMin = 3
+    params.adaptiveThreshWinSizeMax = 53
+    params.adaptiveThreshWinSizeStep = 8
+    # Be a little more permissive about tag size/shape so a partially washed-out
+    # marker still passes the candidate filter.
+    params.minMarkerPerimeterRate = 0.02
+    params.polygonalApproxAccuracyRate = 0.05
+    # Refine corners to subpixel accuracy for a cleaner perspective warp.
+    params.cornerRefinementMethod = aruco.CORNER_REFINE_SUBPIX
+    return aruco.ArucoDetector(dictionary, params)
+
+
+def _detect_markers_robust(frame, detector, required_ids):
+    """Detect markers, retrying with lighting-normalized variants of *frame*.
+
+    Runs detection on progressively contrast-/brightness-adjusted grayscale
+    versions and accumulates markers by ID until every id in *required_ids* is
+    found. Returns (tag_map, corners_list, ids_list, last_rejected) where
+    tag_map maps id -> 4×2 corner array (first detection of each id wins).
+    """
+    import cv2
+    import numpy as np
+
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) \
+        if frame.ndim == 3 else frame
+    clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+
+    # Ordered so the cheapest/most-faithful pass runs first.
+    passes = [
+        ("raw", gray),
+        ("clahe", clahe.apply(gray)),
+        ("bright", cv2.convertScaleAbs(gray, alpha=1.4, beta=40)),
+    ]
+
+    tag_map = {}
+    last_rejected = []
+    for name, img in passes:
+        corners, ids, rejected = detector.detectMarkers(img)
+        last_rejected = rejected
+        new_here = []
+        if ids is not None:
+            for tid, corn in zip(ids.flatten().tolist(), corners):
+                if tid not in tag_map:
+                    tag_map[tid] = corn[0]
+                    new_here.append(tid)
+        print(f"[ArUco]   pass '{name}': +{len(new_here)} new {new_here}  "
+              f"(total {sorted(tag_map)})")
+        if all(i in tag_map for i in required_ids):
+            break
+
+    corners_list = [tm.reshape(1, 4, 2).astype(np.float32)
+                    for tm in tag_map.values()]
+    ids_list = np.array([[t] for t in tag_map.keys()], dtype=np.int32) \
+        if tag_map else None
+    return tag_map, corners_list, ids_list, last_rejected
+
+
 def _compute_aruco_transform(frame, debug_dir):
     """Detect 4 ArUco markers in *frame* and return the perspective transform.
 
@@ -31,28 +103,22 @@ def _compute_aruco_transform(frame, debug_dir):
 
     cv2.imwrite(os.path.join(debug_dir, "capture_aruco_input.jpg"), frame)
 
-    dictionary = aruco.getPredefinedDictionary(aruco.DICT_4X4_50)
-    params = aruco.DetectorParameters()
-    params.detectInvertedMarker = True
-    detector = aruco.ArucoDetector(dictionary, params)
+    detector = _build_detector()
 
-    corners, ids, rejected = detector.detectMarkers(frame)
+    tag_map, corners, ids, rejected = _detect_markers_robust(
+        frame, detector, ARUCO_TAG_IDS)
 
     found_ids = ids.flatten().tolist() if ids is not None else []
     print(f"[ArUco] detected {len(found_ids)} marker(s): {found_ids}  "
           f"(rejected candidates: {len(rejected)})")
 
-    if ids is None or len(ids) < 4:
+    if not all(i in tag_map for i in ARUCO_TAG_IDS):
+        missing = [i for i in ARUCO_TAG_IDS if i not in tag_map]
+        print(f"[ArUco] missing required IDs {missing} (have {sorted(tag_map)})")
         _save_failed_debug(frame, corners, ids, rejected, debug_dir)
         return None
 
     ids_flat = ids.flatten().tolist()
-    if not all(i in ids_flat for i in ARUCO_TAG_IDS):
-        print(f"[ArUco] need IDs {ARUCO_TAG_IDS}, got {ids_flat}")
-        _save_failed_debug(frame, corners, ids, rejected, debug_dir)
-        return None
-
-    tag_map = {int(tid): corn[0] for tid, corn in zip(ids_flat, corners)}
 
     # Save annotated debug image showing detected edges and reference corners
     debug_frame = frame.copy()
