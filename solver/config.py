@@ -83,7 +83,7 @@ A5_CELL_H   = 62    # tightened from 64 to close the horizontal seam
 
 # Global rotation offset added to every piece's rotation_deg (degrees, CCW-positive).
 # Start at 0. Tune in 90° steps once positions are correct.
-PUZZLE_TARGET_ROTATION_DEG = 90.0
+PUZZLE_TARGET_ROTATION_DEG = 270.0  # was 90; +180 for the full-assembly 180° flip
 
 # Per-column (ge) rotation correction in degrees. Applied on top of PUZZLE_TARGET_ROTATION_DEG.
 # Use when a whole column lands consistently rotated by the same amount.
@@ -95,9 +95,14 @@ ROW_ROTATION_CORRECTIONS = {0: 180.0}  # lower row (gn=0) needs +180°
 
 
 def grid_to_robot(ge, gn, grid_W, grid_H):
-    """Map solved-puzzle grid coordinate (ge=east, gn=north) to robot mm."""
-    rx = round(A5_ANCHOR_X - ge * A5_CELL_W)
-    ry = round(A5_ANCHOR_Y - (grid_H - 1 - gn) * A5_CELL_H)
+    """Map solved-puzzle grid coordinate (ge=east, gn=north) to robot mm.
+
+    The solver's grid frame is rotated 180° relative to the physical frame, so
+    both axes are flipped here (ge->grid_W-1-ge, gn->grid_H-1-gn). The matching
+    per-piece +180° is applied via PUZZLE_TARGET_ROTATION_DEG.
+    """
+    rx = round(A5_ANCHOR_X - (grid_W - 1 - ge) * A5_CELL_W)
+    ry = round(A5_ANCHOR_Y - gn * A5_CELL_H)
     return rx, ry
 
 # A4 landscape at 150 DPI
