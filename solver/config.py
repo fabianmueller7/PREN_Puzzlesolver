@@ -67,23 +67,26 @@ def pixel_to_robot(pixel_x, pixel_y):
 # A5 target field — all values in robot mm.
 #
 # Coordinate system: robot X increases to the LEFT, robot Y increases DOWNWARD.
-#   ge (east)  = column index — X decreases as ge increases (rightward)
-#   gn (north) = row index    — Y decreases as gn increases (upward)
 #
-# Anchor = centre of the piece slot at (ge=0, gn=0) = bottom-left of the target grid.
-#
-# Calibration procedure:
-#   1. Jog robot to centre of bottom-left slot  → set A5_ANCHOR_X, A5_ANCHOR_Y
-#   2. Jog to centre of next slot eastward      → A5_CELL_W = ANCHOR_X - that X
-#   3. Jog to centre of next slot northward     → A5_CELL_H = ANCHOR_Y - that Y
-A5_ANCHOR_X = 203   # TODO: measure physically
-A5_ANCHOR_Y = 105   # TODO: measure physically
-A5_CELL_W   = 90    # tightened from 94 to close the vertical centre seam
-A5_CELL_H   = 62    # tightened from 64 to close the horizontal seam
+# Placement uses the solver's TRUE solved layout (piece centroids), not a regular
+# grid: each piece's solved centroid is mapped to robot mm via pixel_to_robot,
+# recentred, rotated by SOLVED_LAYOUT_ROTATION_DEG to fit the landscape frame, and
+# translated so the assembly is centred at (A5_CENTER_X, A5_CENTER_Y).
+A5_CENTER_X = 158   # robot mm — centre of the A5 target area (X increases LEFT)
+A5_CENTER_Y = 74    # robot mm — centre of the A5 target area (Y increases DOWN)
+SOLVED_LAYOUT_ROTATION_DEG = 90.0  # turn the solved layout to landscape (verified in sim_placement)
 
-# Global rotation offset added to every piece's rotation_deg (degrees, CCW-positive).
-# Start at 0. Tune in 90° steps once positions are correct.
-PUZZLE_TARGET_ROTATION_DEG = 90.0  # uniform offset; both rows want 90° (see piece data)
+# Legacy regular-grid params (kept for grid_to_robot / older callers; unused by the
+# true-layout placement above).
+A5_ANCHOR_X = 203
+A5_ANCHOR_Y = 105
+A5_CELL_W   = 90
+A5_CELL_H   = 62
+
+# Global rotation offset added to every piece's Kabsch angle (degrees). With
+# ROTATION_SIGN=-1 the gripper applies -(ang + PT); -90 here yields -ang + 90,
+# matching the +90 layout rotation (verified in sim_placement).
+PUZZLE_TARGET_ROTATION_DEG = -90.0
 
 # Per-column (ge) rotation correction in degrees. Applied on top of PUZZLE_TARGET_ROTATION_DEG.
 # Use when a whole column lands consistently rotated by the same amount.

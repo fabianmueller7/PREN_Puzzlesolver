@@ -234,14 +234,30 @@ class Puzzle:
             rotation_degs.append(rdeg)
 
         ec_list = [self._piece_centroid(p) for p in self.pieces_]
+
+        # Place pieces at the TRUE solved layout (piece centroids), not a regular grid.
+        # Map each solved centroid to robot mm, recentre on the layout centroid, rotate
+        # by SOLVED_LAYOUT_ROTATION_DEG (landscape fit), then translate to the A5 centre.
+        _phi = _math.radians(config.SOLVED_LAYOUT_ROTATION_DEG)
+        _cph, _sph = _math.cos(_phi), _math.sin(_phi)
+        ec_robot = [config.pixel_to_robot(ec[0], ec[1]) if ec else None for ec in ec_list]
+        _valid = [np.asarray(e, float) for e in ec_robot if e is not None]
+        _C = np.mean(_valid, axis=0) if _valid else np.zeros(2)
+        _A5C = np.array([config.A5_CENTER_X, config.A5_CENTER_Y], float)
+
+        def _solved_to_target(er):
+            v = np.asarray(er, float) - _C
+            rx = _cph * v[0] - _sph * v[1]
+            ry = _sph * v[0] + _cph * v[1]
+            return [int(round(_A5C[0] + rx)), int(round(_A5C[1] + ry))]
+
         records = []
         for i, p in enumerate(self.pieces_):
             sc = start_centers[id(p)]
             ec = ec_list[i]
             robot_start = config.pixel_to_robot(sc[0], sc[1])
-            if hasattr(p, "coord"):
-                gn, ge = p.coord
-                robot_end = list(config.grid_to_robot(ge, gn, grid_W, grid_H))
+            if ec_robot[i] is not None:
+                robot_end = _solved_to_target(ec_robot[i])
             else:
                 robot_end = list(robot_start)
             records.append({

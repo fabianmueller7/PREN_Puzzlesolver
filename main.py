@@ -14,7 +14,8 @@ CAMERA_RESOLUTION = (1920, 1080)  # capture resolution
 # rotation_deg from the solver is CCW in screen coordinates (positive = CCW).
 # Set ROTATION_SIGN = -1 if gripper_rotate(positive) means CW (most common).
 # Set ROTATION_SIGN = +1 if gripper_rotate(positive) means CCW.
-ROTATION_SIGN = +1
+# -1: pixel_to_robot contains a reflection, so the gripper angle must be negated.
+ROTATION_SIGN = -1
 
 # Fine-tune pickup position offset (robot mm).
 # Positive X = right, positive Y = down (robot coordinate convention).
