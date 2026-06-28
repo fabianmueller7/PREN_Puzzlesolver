@@ -117,7 +117,10 @@ class PicoInterface:
         return self.call("go_to_z", z=zCoords)
 
     def gripper_rotate(self, aCoords):
-        aCoords += 180
+        # NOTE: rotation is relative to the zero set by reset_rotation(), which is
+        # called before each piece. The previous `aCoords += 180` mounting offset
+        # was double-counted against that reset and rotated every piece an extra
+        # 180°, so it is removed.
         return self.call("gripper_rotate", a=aCoords)
 
     def home_x(self):
@@ -128,6 +131,11 @@ class PicoInterface:
 
     def home_z(self):
         return self.call("home_z")
+
+    def home_a(self):
+        """Home the gripper rotation axis against its endstop.
+        After homing the axis sits at its mechanical zero."""
+        return self.call("home_a")
 
     def reset_rotation(self):
         """Declare the current angular position as 0° — do NOT move the axis.
