@@ -75,8 +75,8 @@ A5_CELL_W   = 90
 A5_CELL_H   = 62
 
 # Global rotation offset added to every piece's rotation_deg (degrees, CCW-positive).
-# 180 = baseline 90 + 90 for the whole-assembly 90° rotation applied in grid_to_robot.
-PUZZLE_TARGET_ROTATION_DEG = 180.0
+# 270 = each piece turned another 90° (positions already correct).
+PUZZLE_TARGET_ROTATION_DEG = 270.0
 
 # Per-column (ge) rotation correction in degrees. Applied on top of PUZZLE_TARGET_ROTATION_DEG.
 # Use when a whole column lands consistently rotated by the same amount.
