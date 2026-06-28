@@ -97,12 +97,12 @@ ROW_ROTATION_CORRECTIONS = {}  # removed: the {0:180} split rotated only one row
 def grid_to_robot(ge, gn, grid_W, grid_H):
     """Map solved-puzzle grid coordinate (ge=east, gn=north) to robot mm.
 
-    The solver's grid frame is rotated 180° relative to the physical frame, so
-    both axes are flipped here (ge->grid_W-1-ge, gn->grid_H-1-gn). The matching
-    per-piece +180° is applied via PUZZLE_TARGET_ROTATION_DEG.
+    Axis directions verified against the solver's true solved layout
+    (end_center_px -> pixel_to_robot): X decreases as ge increases (rightward),
+    Y increases as gn increases (downward).
     """
-    rx = round(A5_ANCHOR_X - (grid_W - 1 - ge) * A5_CELL_W)
-    ry = round(A5_ANCHOR_Y - gn * A5_CELL_H)
+    rx = round(A5_ANCHOR_X - ge * A5_CELL_W)
+    ry = round(A5_ANCHOR_Y - (grid_H - 1 - gn) * A5_CELL_H)
     return rx, ry
 
 # A4 landscape at 150 DPI
