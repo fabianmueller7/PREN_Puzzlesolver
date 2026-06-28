@@ -78,8 +78,8 @@ def pixel_to_robot(pixel_x, pixel_y):
 #   3. Jog to centre of next slot northward     → A5_CELL_H = ANCHOR_Y - that Y
 A5_ANCHOR_X = 203   # TODO: measure physically
 A5_ANCHOR_Y = 105   # TODO: measure physically
-A5_CELL_W   = 94    # TODO: measure physically
-A5_CELL_H   = 64    # TODO: measure physically
+A5_CELL_W   = 90    # tightened from 94 to close the vertical centre seam
+A5_CELL_H   = 62    # tightened from 64 to close the horizontal seam
 
 # Global rotation offset added to every piece's rotation_deg (degrees, CCW-positive).
 # Start at 0. Tune in 90° steps once positions are correct.
