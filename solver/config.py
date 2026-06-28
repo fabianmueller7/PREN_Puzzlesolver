@@ -75,7 +75,8 @@ A5_CELL_W   = 90
 A5_CELL_H   = 62
 
 # Global rotation offset added to every piece's rotation_deg (degrees, CCW-positive).
-PUZZLE_TARGET_ROTATION_DEG = 90.0
+# 180 = baseline 90 + 90 for the whole-assembly 90° rotation applied in grid_to_robot.
+PUZZLE_TARGET_ROTATION_DEG = 180.0
 
 # Per-column (ge) rotation correction in degrees. Applied on top of PUZZLE_TARGET_ROTATION_DEG.
 # Use when a whole column lands consistently rotated by the same amount.
@@ -89,12 +90,13 @@ ROW_ROTATION_CORRECTIONS = {}  # removed: the {0:180} split rotated only one row
 def grid_to_robot(ge, gn, grid_W, grid_H):
     """Map solved-puzzle grid coordinate (ge=east, gn=north) to robot mm.
 
-    Axis directions verified against the solver's true solved layout
-    (end_center_px -> pixel_to_robot): X decreases as ge increases (rightward),
-    Y increases as gn increases (downward).
+    The solver's solution is rotated 90° CCW relative to the physical frame
+    (verified against the hand-solved ground truth with numbered pieces). The
+    assembly is rotated back here: X is driven by gn, Y by ge. Horizontal pitch
+    stays A5_CELL_W, vertical pitch A5_CELL_H, so the layout remains landscape.
     """
-    rx = round(A5_ANCHOR_X - ge * A5_CELL_W)
-    ry = round(A5_ANCHOR_Y - (grid_H - 1 - gn) * A5_CELL_H)
+    rx = round(A5_ANCHOR_X - gn * A5_CELL_W)
+    ry = round(A5_ANCHOR_Y - ge * A5_CELL_H)
     return rx, ry
 
 # A4 landscape at 150 DPI
