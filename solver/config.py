@@ -75,8 +75,8 @@ A5_CELL_W   = 90
 A5_CELL_H   = 62
 
 # Global rotation offset added to every piece's rotation_deg (degrees, CCW-positive).
-# 270 = each piece turned another 90° (positions already correct).
-PUZZLE_TARGET_ROTATION_DEG = 270.0
+# 90 = each piece turned 90° (the opposite direction from 270; positions already correct).
+PUZZLE_TARGET_ROTATION_DEG = 90.0
 
 # Per-column (ge) rotation correction in degrees. Applied on top of PUZZLE_TARGET_ROTATION_DEG.
 # Use when a whole column lands consistently rotated by the same amount.
