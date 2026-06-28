@@ -117,10 +117,11 @@ class PicoInterface:
         return self.call("go_to_z", z=zCoords)
 
     def gripper_rotate(self, aCoords):
-        # NOTE: rotation is relative to the zero set by reset_rotation(), which is
-        # called before each piece. The previous `aCoords += 180` mounting offset
-        # was double-counted against that reset and rotated every piece an extra
-        # 180°, so it is removed.
+        # Rotation is relative to the zero set by reset_rotation() before each piece.
+        # The firmware expects an absolute target in [0, 360); normalize so negative
+        # angles still produce the correct net rotation. (The old `+= 180` offset
+        # double-counted against the reset and over-rotated every piece by 180°.)
+        aCoords %= 360
         return self.call("gripper_rotate", a=aCoords)
 
     def home_x(self):
