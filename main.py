@@ -22,6 +22,13 @@ PICKUP_OFFSET_X =  1   # 1 mm to the right
 PICKUP_OFFSET_Y = -3   # 2 mm up
 
 
+# Front-panel button GPIO pins (Pico). The firmware emits a single
+# {"type":"event","name":"button_press","pin":<n>} per short press (on release).
+# GPI1 (pin 20) = "prepare" → home the robot; GPI2 (pin 21) = "start" → run pipeline.
+BUTTON_HOME_PIN  = 20
+BUTTON_START_PIN = 21
+
+
 CAPTURE_PATH        = "debug_output/capture.jpg"
 CAPTURE_RAW_PATH    = "debug_output/capture_raw.jpg"
 CAPTURE_COARSE_PATH = "debug_output/capture_coarse.jpg"
@@ -154,18 +161,31 @@ def solve_puzzle(image_path: str, green_screen: bool = False) -> list:
 # Pipeline step 3 — move
 # ---------------------------------------------------------------------------
 
-def move_pieces(robot, pieces: list):
-    """
-    For each piece: pick up, rotate to solved orientation, put back down in place.
-    """
-    print("[3/3] Starting piece movements")
-
+def home_robot(robot):
+    """Enable motors and home every axis. Leaves the gripper up and motors enabled."""
+    print("[home] homing robot")
     robot.motors_enable()
     robot.home_z()
     robot.gripper_up()
     robot.home_x()
     robot.home_y()
     robot.gripper_up()
+    print("[home] done")
+
+
+def move_pieces(robot, pieces: list, skip_home: bool = False):
+    """
+    For each piece: pick up, rotate to solved orientation, put back down in place.
+
+    When *skip_home* is True the homing sequence is skipped (motors are still
+    enabled) — used when the robot was already homed via the front home button.
+    """
+    print("[3/3] Starting piece movements")
+
+    if skip_home:
+        robot.motors_enable()
+    else:
+        home_robot(robot)
 
     for piece in pieces:
         idx     = piece["piece_index"]
@@ -216,10 +236,89 @@ def run_pipeline(green_screen: bool = False):
     _setup_debug_dir()
     robot = PicoInterface(port=ROBOT_PORT)
     try:
-        image_path = take_picture(robot=robot)
-        pieces     = solve_puzzle(image_path, green_screen=green_screen)
-        move_pieces(robot, pieces)
-        robot.led_off()
+        _run_solve(robot, green_screen=green_screen)
+    finally:
+        robot.close()
+
+
+def _run_solve(robot, green_screen: bool = False, skip_home: bool = False):
+    """Capture → solve → move on an already-open robot connection."""
+    image_path = take_picture(robot=robot)
+    pieces     = solve_puzzle(image_path, green_screen=green_screen)
+    move_pieces(robot, pieces, skip_home=skip_home)
+    robot.led_off()
+
+
+# ---------------------------------------------------------------------------
+# Front-panel button listener
+# ---------------------------------------------------------------------------
+
+def run_button_listener(green_screen: bool = False):
+    """Wait for front-panel button presses (serial events from the Pico).
+
+    Button 1 homes the robot; button 2 runs the full capture → solve → move
+    pipeline. If the robot was already homed via button 1 (and no run has
+    happened since), button 2 skips the homing step.
+
+    Pico event callbacks fire inside PicoInterface's serial-listener thread,
+    which is also the thread that receives RPC responses — so the actual work
+    is dispatched to a separate worker thread to avoid deadlocking the
+    response wait. A busy guard ignores presses while a task is in progress.
+    """
+    import threading
+    import time
+    from robot.pico_interface import PicoInterface
+
+    _setup_debug_dir()
+    robot = PicoInterface(port=ROBOT_PORT)
+
+    lock  = threading.Lock()
+    state = {"homed": False, "busy": False}
+
+    def _dispatch(label, fn):
+        def worker():
+            try:
+                fn()
+            except Exception as e:
+                print(f"[buttons] {label} failed: {e}")
+            finally:
+                with lock:
+                    state["busy"] = False
+        with lock:
+            if state["busy"]:
+                print(f"[buttons] busy — ignoring {label}")
+                return
+            state["busy"] = True
+        threading.Thread(target=worker, daemon=True).start()
+
+    def on_home(msg=None):
+        def task():
+            home_robot(robot)
+            with lock:
+                state["homed"] = True
+        _dispatch("home", task)
+
+    def on_start(msg=None):
+        def task():
+            with lock:
+                already_homed = state["homed"]
+            _run_solve(robot, green_screen=green_screen, skip_home=already_homed)
+            # A completed run ends with motors disabled, so the robot is no
+            # longer at a known home position.
+            with lock:
+                state["homed"] = False
+        _dispatch("start", task)
+
+    robot.on_button(BUTTON_HOME_PIN, on_home)
+    robot.on_button(BUTTON_START_PIN, on_start)
+
+    print(f"Listening for front buttons — pin {BUTTON_HOME_PIN}=home, "
+          f"pin {BUTTON_START_PIN}=start. Press Ctrl+C to exit.")
+    try:
+        while True:
+            time.sleep(0.5)
+    except KeyboardInterrupt:
+        print("\nStopping button listener")
     finally:
         robot.close()
 
@@ -233,6 +332,8 @@ def main():
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--gui",  action="store_true", help="open GUI viewer")
     mode.add_argument("--prod", action="store_true", help="production pipeline: capture → solve → move")
+    mode.add_argument("--buttons", action="store_true",
+                      help="wait for front-panel buttons (button 1 = home, button 2 = start pipeline)")
     parser.add_argument("--green-screen", action="store_true", help="enable green background removal")
     args = parser.parse_args()
 
@@ -244,6 +345,9 @@ def main():
         viewer = Viewer()
         viewer.show()
         sys.exit(app.exec_())
+
+    elif args.buttons:
+        run_button_listener(green_screen=args.green_screen)
 
     else:  # --prod
         run_pipeline(green_screen=args.green_screen)

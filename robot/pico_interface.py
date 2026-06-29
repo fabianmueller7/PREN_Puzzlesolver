@@ -57,14 +57,34 @@ class PicoInterface:
     # ------------------------
     def _handle_event(self, msg):
         name = msg.get("name")
+
+        # Fire generic event handlers (e.g. "button_press")
         if name in self.event_handlers:
             for callback in self.event_handlers[name]:
                 callback(msg)
+
+        # Fire pin-specific button handlers (e.g. "button_press:21")
+        if name == "button_press":
+            pin = msg.get("pin")
+            pin_key = f"button_press:{pin}"
+            if pin_key in self.event_handlers:
+                for callback in self.event_handlers[pin_key]:
+                    callback(msg)
 
     def on_event(self, event_name, callback):
         if event_name not in self.event_handlers:
             self.event_handlers[event_name] = []
         self.event_handlers[event_name].append(callback)
+
+    def on_button(self, pin, callback):
+        """Register a handler for a specific front-panel button pin.
+
+        The firmware emits {"type":"event","name":"button_press","pin":<n>} once
+        per short press (on release). *pin* matches the Pico GPIO number."""
+        key = f"button_press:{pin}"
+        if key not in self.event_handlers:
+            self.event_handlers[key] = []
+        self.event_handlers[key].append(callback)
 
     # ------------------------
     # RPC call
