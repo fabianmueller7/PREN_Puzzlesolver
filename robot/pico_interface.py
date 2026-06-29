@@ -164,35 +164,25 @@ class PicoInterface:
         The firmware must implement this as a position-counter reset, not a homing move."""
         return self.call("reset_rotation")
 
-    def gpo1_on(self):
-        return self.call("gpo1_on")
+    # Front-panel status LEDs (traffic light). Firmware drives GPO1 (green) and
+    # GPO2 (yellow/red) — see PrenMain/rpc.cpp.
+    def led_green_on(self):
+        return self.call("led_green_on")
 
-    def gpo1_off(self):
-        return self.call("gpo1_off")
+    def led_green_off(self):
+        return self.call("led_green_off")
 
-    def gpo2_on(self):
-        return self.call("gpo2_on")
+    def led_yellow_on(self):
+        return self.call("led_yellow_on")
 
-    def gpo2_off(self):
-        return self.call("gpo2_off")
+    def led_yellow_off(self):
+        return self.call("led_yellow_off")
 
-    def gpo3_on(self):
-        return self.call("gpo3_on")
+    def led_red_on(self):
+        return self.call("led_red_on")
 
-    def gpo3_off(self):
-        return self.call("gpo3_off")
-
-    def gpo4_on(self):
-        return self.call("gpo4_on")
-
-    def gpo4_off(self):
-        return self.call("gpo4_off")
-
-    def gpo5_on(self):
-        return self.call("gpo5_on")
-
-    def gpo5_off(self):
-        return self.call("gpo5_off")
+    def led_red_off(self):
+        return self.call("led_red_off")
 
     def gripper_on(self):
         return self.call("gripper_on")

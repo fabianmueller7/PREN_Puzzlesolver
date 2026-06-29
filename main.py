@@ -250,6 +250,38 @@ def _run_solve(robot, green_screen: bool = False, skip_home: bool = False):
 
 
 # ---------------------------------------------------------------------------
+# Status LED
+# ---------------------------------------------------------------------------
+
+def set_status_led(robot, status):
+    """Drive the front-panel status LED.
+
+      'ready' → green  (idle, waiting for a button press)
+      'busy'  → orange (a task is running)
+      'error' → red    (the last task crashed)
+
+    NOTE: in the current firmware led_yellow and led_red share GPO2, so orange
+    and red are physically the same lamp — green vs. lit is the reliable signal
+    until the firmware drives red on its own pin.
+    """
+    try:
+        if status == "ready":
+            robot.led_red_off()
+            robot.led_yellow_off()
+            robot.led_green_on()
+        elif status == "busy":
+            robot.led_green_off()
+            robot.led_red_off()
+            robot.led_yellow_on()
+        elif status == "error":
+            robot.led_green_off()
+            robot.led_yellow_off()
+            robot.led_red_on()
+    except Exception as e:
+        print(f"[led] could not set status '{status}': {e}")
+
+
+# ---------------------------------------------------------------------------
 # Front-panel button listener
 # ---------------------------------------------------------------------------
 
@@ -277,10 +309,14 @@ def run_button_listener(green_screen: bool = False):
 
     def _dispatch(label, fn):
         def worker():
+            set_status_led(robot, "busy")          # orange while operating
             try:
                 fn()
             except Exception as e:
                 print(f"[buttons] {label} failed: {e}")
+                set_status_led(robot, "error")     # red on crash
+            else:
+                set_status_led(robot, "ready")     # green when done → ready
             finally:
                 with lock:
                     state["busy"] = False
@@ -312,6 +348,8 @@ def run_button_listener(green_screen: bool = False):
     robot.on_button(BUTTON_HOME_PIN, on_home)
     robot.on_button(BUTTON_START_PIN, on_start)
 
+    set_status_led(robot, "ready")   # green: ready for input
+
     print(f"Listening for front buttons — pin {BUTTON_HOME_PIN}=home, "
           f"pin {BUTTON_START_PIN}=start. Press Ctrl+C to exit.")
     try:
@@ -320,6 +358,9 @@ def run_button_listener(green_screen: bool = False):
     except KeyboardInterrupt:
         print("\nStopping button listener")
     finally:
+        robot.led_green_off()
+        robot.led_yellow_off()
+        robot.led_red_off()
         robot.close()
 
 
