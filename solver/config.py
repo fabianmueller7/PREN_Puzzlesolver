@@ -102,7 +102,7 @@ def pixel_to_robot(pixel_x, pixel_y, height_mm=0.0):
 #   gn (north) = row index    — Y decreases as gn increases (upward)
 A5_ANCHOR_X = 203
 A5_ANCHOR_Y = 105
-A5_CELL_W   = 90
+A5_CELL_W   = 62   # was 90 → closed the ~3 cm row-band gap; pieces are ~square so it matches A5_CELL_H
 A5_CELL_H   = 62
 
 # Global rotation offset added to every piece's rotation_deg (degrees, CCW-positive).
