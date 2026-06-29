@@ -98,16 +98,23 @@ def pixel_to_robot(pixel_x, pixel_y, height_mm=0.0):
 # A5 target field — all values in robot mm.
 #
 # Coordinate system: robot X increases to the LEFT, robot Y increases DOWNWARD.
-#   ge (east)  = column index — X decreases as ge increases (rightward)
-#   gn (north) = row index    — Y decreases as gn increases (upward)
+# The assembly is centred on (A5_CENTER_X, A5_CENTER_Y) — the centre of the
+# physical A5 target frame.
+A5_CENTER_X = 158
+A5_CENTER_Y = 43
+
+# Legacy grid-pitch anchors — only used by the deprecated grid_to_robot() below.
 A5_ANCHOR_X = 203
 A5_ANCHOR_Y = 105
 A5_CELL_W   = 90
 A5_CELL_H   = 62
 
-# Global rotation offset added to every piece's rotation_deg (degrees, CCW-positive).
-# 90 = each piece turned 90° (the opposite direction from 270; positions already correct).
-PUZZLE_TARGET_ROTATION_DEG = 90.0
+# Global rotation offset added to every piece's rotation_deg (degrees).
+# With assembly_to_robot() the positions already encode the solved layout, so the
+# pieces only need their own solved orientation (kabsch) and this stays 0. A
+# non-zero value here would rotate the pieces WITHOUT rotating their positions and
+# break the tessellation — to re-orient the whole assembly, rotate both together.
+PUZZLE_TARGET_ROTATION_DEG = 0.0
 
 # Per-column (ge) rotation correction in degrees. Applied on top of PUZZLE_TARGET_ROTATION_DEG.
 # Use when a whole column lands consistently rotated by the same amount.
@@ -118,13 +125,39 @@ COLUMN_ROTATION_CORRECTIONS = {}
 ROW_ROTATION_CORRECTIONS = {}  # removed: the {0:180} split rotated only one row, leaving the other 180° off
 
 
-def grid_to_robot(ge, gn, grid_W, grid_H):
-    """Map solved-puzzle grid coordinate (ge=east, gn=north) to robot mm.
+def assembly_to_robot(solved_centroids_px):
+    """Map each piece's SOLVED centroid (px, in the solved/stick frame) to robot mm.
 
-    The solver's solution is rotated 90° CCW relative to the physical frame
-    (verified against the hand-solved ground truth with numbered pieces). The
-    assembly is rotated back here: X is driven by gn, Y by ge. Horizontal pitch
-    stays A5_CELL_W, vertical pitch A5_CELL_H, so the layout remains landscape.
+    Places the whole assembly centred on (A5_CENTER_X, A5_CENTER_Y). The relative
+    layout comes straight from pixel_to_robot — its scale and reflection match the
+    per-piece rotation pipeline (ROTATION_SIGN * kabsch), so positions and piece
+    orientations form ONE rigid map and the pieces tessellate. This is shape-
+    agnostic: no grid-pitch assumptions, so it works for any tiling (2×2, 2×3, …),
+    unlike the old grid_to_robot() which synthesised cells and only worked when the
+    transpose happened to equal a rotation (square grids).
+
+    *solved_centroids_px* is a list (piece order); entries may be None. Returns a
+    list of (x, y) robot mm, or None where the input was None.
+    """
+    mapped = [pixel_to_robot(c[0], c[1]) if c is not None else None
+              for c in solved_centroids_px]
+    valid = [m for m in mapped if m is not None]
+    if not valid:
+        return mapped
+    mx = sum(m[0] for m in valid) / len(valid)
+    my = sum(m[1] for m in valid) / len(valid)
+    return [None if m is None
+            else (round(A5_CENTER_X + (m[0] - mx)), round(A5_CENTER_Y + (m[1] - my)))
+            for m in mapped]
+
+
+def grid_to_robot(ge, gn, grid_W, grid_H):
+    """DEPRECATED — superseded by assembly_to_robot().
+
+    Synthesised a robot-mm cell from grid indices by transposing the axes. A
+    transpose is a reflection, not a rotation, so it only stayed consistent with
+    the per-piece rotation on square grids; a 2×3 landed scrambled. Kept only for
+    reference/back-compat.
     """
     rx = round(A5_ANCHOR_X - gn * A5_CELL_W)
     ry = round(A5_ANCHOR_Y - ge * A5_CELL_H)

@@ -234,14 +234,18 @@ class Puzzle:
             rotation_degs.append(rdeg)
 
         ec_list = [self._piece_centroid(p) for p in self.pieces_]
+        # End positions: place each piece at its SOLVED centroid mapped to robot mm,
+        # with the whole assembly recentred on the target frame. Positions and the
+        # per-piece rotation then form one rigid map, so the pieces tessellate (the
+        # old grid_to_robot synthesised cells and scrambled non-square grids).
+        robot_ends = config.assembly_to_robot(ec_list)
         records = []
         for i, p in enumerate(self.pieces_):
             sc = start_centers[id(p)]
             ec = ec_list[i]
             robot_start = config.pixel_to_robot(sc[0], sc[1], height_mm=config.PIECE_THICKNESS_MM)
-            if hasattr(p, "coord"):
-                gn, ge = p.coord
-                robot_end = list(config.grid_to_robot(ge, gn, grid_W, grid_H))
+            if robot_ends[i] is not None:
+                robot_end = list(robot_ends[i])
             else:
                 robot_end = list(robot_start)
             records.append({
