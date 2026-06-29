@@ -24,9 +24,9 @@ PICKUP_OFFSET_Y = -3   # 2 mm up
 
 # Front-panel button GPIO pins (Pico). The firmware emits a single
 # {"type":"event","name":"button_press","pin":<n>} per short press (on release).
-# GPI1 (pin 21) = "prepare" → home the robot; GPI2 (pin 22) = "start" → run pipeline.
-BUTTON_HOME_PIN  = 21
-BUTTON_START_PIN = 22
+# GPI1 (pin 20) = "prepare" → home the robot; GPI2 (pin 21) = "start" → run pipeline.
+BUTTON_HOME_PIN  = 20
+BUTTON_START_PIN = 21
 
 
 CAPTURE_PATH        = "debug_output/capture.jpg"
