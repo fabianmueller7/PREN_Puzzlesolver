@@ -1,3 +1,5 @@
+import math
+
 DEBUG_FILE_OUTPUT = 1    # Saves debug images/data to debug_output/ and runs processing sequentially
 DEBUG_SHOW_DIAGRAMS = 0  # Shows matplotlib diagrams interactively (requires DEBUG_FILE_OUTPUT = 1)
 DEBUG_ALT_SOLVER = 0     # Saves debug images for the alternative solver to debug_output/
@@ -67,10 +69,12 @@ def pixel_to_robot(pixel_x, pixel_y):
 # A5 target field — all values in robot mm.
 #
 # Coordinate system: robot X increases to the LEFT, robot Y increases DOWNWARD.
-#   ge (east)  = column index — X decreases as ge increases (rightward)
-#   gn (north) = row index    — Y decreases as gn increases (upward)
-A5_ANCHOR_X = 203
-A5_ANCHOR_Y = 105
+#   ge (east)  = column index, pitch A5_CELL_W (the puzzle's east extent per cell)
+#   gn (north) = row index,    pitch A5_CELL_H (the puzzle's north extent per cell)
+# A5_ANCHOR is the robot-mm position of the ASSEMBLY CENTRE (the grid is rotated about
+# it), so it should sit at the centre of the physical A5 target frame.
+A5_ANCHOR_X = 158
+A5_ANCHOR_Y = 74
 A5_CELL_W   = 90
 A5_CELL_H   = 62
 
@@ -90,14 +94,24 @@ ROW_ROTATION_CORRECTIONS = {}  # removed: the {0:180} split rotated only one row
 def grid_to_robot(ge, gn, grid_W, grid_H):
     """Map solved-puzzle grid coordinate (ge=east, gn=north) to robot mm.
 
-    The solver's solution is rotated 90° CCW relative to the physical frame
-    (verified against the hand-solved ground truth with numbered pieces). The
-    assembly is rotated back here: X is driven by gn, Y by ge. Horizontal pitch
-    stays A5_CELL_W, vertical pitch A5_CELL_H, so the layout remains landscape.
+    The whole assembly is turned by PUZZLE_TARGET_ROTATION_DEG — the SAME angle every
+    piece is spun by (Puzzle.py adds it to each piece's rotation_deg). Layout and piece
+    orientation must therefore be ONE rigid rotation. We build the cell's offset from the
+    grid centre in the solver's natural orientation (east→x, north→y, with the physical
+    pitches) and rotate that offset by PUZZLE_TARGET_ROTATION_DEG about the centre.
+
+    The old code instead TRANSPOSED the axes (X<-gn, Y<-ge). A transpose is a reflection,
+    not a rotation: it coincides with the per-piece +90° spin only on a square grid, which
+    is why a 2x2 (4 pieces) placed correctly but a 2x3 (6 pieces) landed 90° across the
+    target. Rotating the offset (below) is shape-agnostic and stays consistent for any angle.
     """
-    rx = round(A5_ANCHOR_X - gn * A5_CELL_W)
-    ry = round(A5_ANCHOR_Y - ge * A5_CELL_H)
-    return rx, ry
+    ox = (ge - (grid_W - 1) / 2.0) * A5_CELL_W       # east offset from grid centre (mm)
+    oy = (gn - (grid_H - 1) / 2.0) * A5_CELL_H        # north offset from grid centre (mm)
+    th = math.radians(PUZZLE_TARGET_ROTATION_DEG)
+    c, s = math.cos(th), math.sin(th)
+    rx = A5_ANCHOR_X - (c * ox - s * oy)
+    ry = A5_ANCHOR_Y - (s * ox + c * oy)
+    return round(rx), round(ry)
 
 # A4 landscape at 150 DPI
 DEBUG_OUTPUT_W = 1782
