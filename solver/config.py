@@ -101,7 +101,7 @@ def pixel_to_robot(pixel_x, pixel_y, height_mm=0.0):
 #   ge (east)  = column index — X decreases as ge increases (rightward)
 #   gn (north) = row index    — Y decreases as gn increases (upward)
 A5_ANCHOR_X = 203
-A5_ANCHOR_Y = 92   # 105 - 13: shift whole assembly up 1.3 cm (-Y)
+A5_ANCHOR_Y = 72   # 105 - 33: shift whole assembly up 3.3 cm (-Y)
 A5_CELL_W   = 62   # was 90 → closed the ~3 cm row-band gap; pieces are ~square so it matches A5_CELL_H
 A5_CELL_H   = 62
 
