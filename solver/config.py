@@ -100,7 +100,7 @@ def pixel_to_robot(pixel_x, pixel_y, height_mm=0.0):
 # Coordinate system: robot X increases to the LEFT, robot Y increases DOWNWARD.
 # The assembly is centred on (A5_CENTER_X, A5_CENTER_Y) — the centre of the
 # physical A5 target frame.
-A5_CENTER_X = 158
+A5_CENTER_X = 188   # 158 + 30 mm: shift whole assembly 3 cm "down" (down = +X for the motor)
 A5_CENTER_Y = 43
 
 # Legacy grid-pitch anchors — only used by the deprecated grid_to_robot() below.
