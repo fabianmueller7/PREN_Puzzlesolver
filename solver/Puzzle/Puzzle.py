@@ -238,7 +238,7 @@ class Puzzle:
         for i, p in enumerate(self.pieces_):
             sc = start_centers[id(p)]
             ec = ec_list[i]
-            robot_start = config.pixel_to_robot(sc[0], sc[1])
+            robot_start = config.pixel_to_robot(sc[0], sc[1], height_mm=config.PIECE_THICKNESS_MM)
             if hasattr(p, "coord"):
                 gn, ge = p.coord
                 robot_end = list(config.grid_to_robot(ge, gn, grid_W, grid_H))

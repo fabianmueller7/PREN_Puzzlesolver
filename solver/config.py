@@ -54,13 +54,44 @@ CAL_CENTRE_Y = 280.00  # robot mm
 CAL_SCALE_X  = 1.0
 CAL_SCALE_Y  = 1.0
 
+# ---------------------------------------------------------------------------
+# Parallax (piece-height) correction
+# ---------------------------------------------------------------------------
+# The affine CAL_M is fit from the 4 playing-field corners, which lie on the
+# field plane (height 0). It is therefore only exact for points on that plane.
+# A puzzle piece's TOP face — what the camera actually sees — sits one piece
+# thickness above the plane, so for any piece away from the point directly under
+# the lens (the nadir) the detected top-centre maps to a robot-mm point pushed
+# radially OUTWARD from the nadir.
+#
+# Geometry (pinhole): lens at height H over the nadir, a feature at height h and
+# horizontal offset r_true from the nadir images to the ground point
+#   r_apparent = r_true * H / (H - h).
+# So we recover the true base centre by scaling the offset back in:
+#   B_true = N + (A_apparent - N) * (H - h) / H.
+CAMERA_HEIGHT_MM   = 475.0          # lens height above the playing-field plane
+PIECE_THICKNESS_MM = 4.0            # piece top-face height above the plane
+CAMERA_NADIR_X     = CAL_CENTRE_X   # robot mm directly under the lens (field centre)
+CAMERA_NADIR_Y     = CAL_CENTRE_Y
 
-def pixel_to_robot(pixel_x, pixel_y):
-    """Convert image pixel coordinates to robot mm coordinates."""
+
+def pixel_to_robot(pixel_x, pixel_y, height_mm=0.0):
+    """Convert image pixel coordinates to robot mm coordinates.
+
+    *height_mm* is the height of the imaged surface above the playing-field
+    plane. The affine calibration is exact only on that plane; an object whose
+    top face is *height_mm* above it images outward from the camera nadir by a
+    factor H/(H-h). Pass the piece thickness to correct the pickup centre for
+    this parallax. Default 0 = on the plane, no correction.
+    """
     rx = CAL_M[0][0] * pixel_x + CAL_M[0][1] * pixel_y + CAL_M[0][2]
     ry = CAL_M[1][0] * pixel_x + CAL_M[1][1] * pixel_y + CAL_M[1][2]
     rx = CAL_CENTRE_X + (rx - CAL_CENTRE_X) * CAL_SCALE_X
     ry = CAL_CENTRE_Y + (ry - CAL_CENTRE_Y) * CAL_SCALE_Y
+    if height_mm:
+        s = (CAMERA_HEIGHT_MM - height_mm) / CAMERA_HEIGHT_MM
+        rx = CAMERA_NADIR_X + (rx - CAMERA_NADIR_X) * s
+        ry = CAMERA_NADIR_Y + (ry - CAMERA_NADIR_Y) * s
     return round(rx), round(ry)
 
 
