@@ -100,10 +100,29 @@ def pixel_to_robot(pixel_x, pixel_y, height_mm=0.0):
 # Coordinate system: robot X increases to the LEFT, robot Y increases DOWNWARD.
 #   ge (east)  = column index — X decreases as ge increases (rightward)
 #   gn (north) = row index    — Y decreases as gn increases (upward)
-A5_ANCHOR_X = 220
-A5_ANCHOR_Y = 100   # 105 - 33: shift whole assembly up 3.3 cm (-Y)
-A5_CELL_W   = 62   # was 90 → closed the ~3 cm row-band gap; pieces are ~square so it matches A5_CELL_H
-A5_CELL_H   = 62
+#
+# Per-puzzle-size placement profiles, AUTO-SELECTED by piece count (grid_W*grid_H).
+# The 4-piece (2×2) and 6-piece (2×3) assemblies need different anchors/pitches, so
+# each size is tuned independently. grid_to_robot picks the matching profile.
+#   anchor_x/y = robot mm of the (gn=0, ge=0) cell; cell_w/h = pitch per grid step.
+PLACEMENT_PROFILES = {
+    4: {"anchor_x": 203, "anchor_y": 105, "cell_w": 90, "cell_h": 62},  # 2×2 — last known-good
+    6: {"anchor_x": 220, "anchor_y": 100, "cell_w": 62, "cell_h": 62},  # 2×3 — verified 2026-06-29
+}
+# Used when a piece count has no dedicated profile above.
+PLACEMENT_DEFAULT = PLACEMENT_PROFILES[6]
+
+
+def placement_profile(grid_W, grid_H):
+    """Pick the placement profile for the solved grid, keyed by total piece count."""
+    return PLACEMENT_PROFILES.get(grid_W * grid_H, PLACEMENT_DEFAULT)
+
+
+# Back-compat aliases (mirror the default profile) for any code reading these directly.
+A5_ANCHOR_X = PLACEMENT_DEFAULT["anchor_x"]
+A5_ANCHOR_Y = PLACEMENT_DEFAULT["anchor_y"]
+A5_CELL_W   = PLACEMENT_DEFAULT["cell_w"]
+A5_CELL_H   = PLACEMENT_DEFAULT["cell_h"]
 
 # Global rotation offset added to every piece's rotation_deg (degrees, CCW-positive).
 # 90 = each piece turned 90° (the opposite direction from 270; positions already correct).
@@ -121,13 +140,12 @@ ROW_ROTATION_CORRECTIONS = {}  # removed: the {0:180} split rotated only one row
 def grid_to_robot(ge, gn, grid_W, grid_H):
     """Map solved-puzzle grid coordinate (ge=east, gn=north) to robot mm.
 
-    The solver's solution is rotated 90° CCW relative to the physical frame
-    (verified against the hand-solved ground truth with numbered pieces). The
-    assembly is rotated back here: X is driven by gn, Y by ge. Horizontal pitch
-    stays A5_CELL_W, vertical pitch A5_CELL_H, so the layout remains landscape.
+    Uses the placement profile auto-selected for this puzzle size (4 vs 6 pieces).
+    X is driven by gn, Y by ge; horizontal pitch cell_w, vertical pitch cell_h.
     """
-    rx = round(A5_ANCHOR_X - gn * A5_CELL_W)
-    ry = round(A5_ANCHOR_Y - ge * A5_CELL_H)
+    p = placement_profile(grid_W, grid_H)
+    rx = round(p["anchor_x"] - gn * p["cell_w"])
+    ry = round(p["anchor_y"] - ge * p["cell_h"])
     return rx, ry
 
 # A4 landscape at 150 DPI
