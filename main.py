@@ -241,10 +241,28 @@ def run_pipeline(green_screen: bool = False):
         robot.close()
 
 
+def _render_placement_debug():
+    """Write debug_output/predicted_placement.png — a render of where the robot will
+    place each piece in robot mm (the solver's solution mapped to the table). Mirrors
+    tools/sim_placement.py. Best-effort: never let a render failure abort a prod run."""
+    try:
+        import matplotlib
+        matplotlib.use("Agg")                       # headless (no display on the Pi)
+        sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "tools"))
+        import sim_placement
+        debug_dir = os.environ["ZOLVER_TEMP_DIR"]
+        out = os.path.join(debug_dir, "predicted_placement.png")
+        sim_placement.simulate(debug_dir, out)
+        print(f"[debug] predicted placement saved: {out}")
+    except Exception as e:
+        print(f"[debug] placement render skipped: {e}")
+
+
 def _run_solve(robot, green_screen: bool = False, skip_home: bool = False):
     """Capture → solve → move on an already-open robot connection."""
     image_path = take_picture(robot=robot)
     pieces     = solve_puzzle(image_path, green_screen=green_screen)
+    _render_placement_debug()
     move_pieces(robot, pieces, skip_home=skip_home)
     robot.led_off()
 

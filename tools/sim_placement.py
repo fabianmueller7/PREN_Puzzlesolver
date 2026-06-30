@@ -85,15 +85,17 @@ def simulate(debug_dir, out_path):
     fig, ax = plt.subplots(figsize=(9, 6))
     colors = ["#e6194B", "#3cb44b", "#4363d8", "#f58231"]
 
-    # End positions via the same rigid map the solver/robot use (solved centroid →
-    # robot mm, assembly recentred). Indexed by piece order, matching pcs.
-    robot_ends = config.assembly_to_robot([p.get("end_center_px") for p in pcs])
+    coords = [p["grid_coord"] for p in pcs if p.get("grid_coord")]
+    grid_H = (max(c[0] for c in coords) + 1) if coords else 1
+    grid_W = (max(c[1] for c in coords) + 1) if coords else 1
 
     for p in pcs:
         idx = p["piece_index"]
         start_px = np.array(p["start_center_px"], dtype=float)
+        if not p.get("grid_coord"):
+            continue                          # unsolved piece (no target) — skip
         gn, ge = p["grid_coord"]
-        end_mm = np.array(robot_ends[idx], dtype=float)
+        end_mm = np.array(config.grid_to_robot(ge, gn, grid_W, grid_H), dtype=float)
         base = p["rotation_deg"] - JSON_PT
         deg = base + config.PUZZLE_TARGET_ROTATION_DEG \
             + config.COLUMN_ROTATION_CORRECTIONS.get(ge, 0.0) \
