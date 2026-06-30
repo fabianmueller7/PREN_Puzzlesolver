@@ -469,18 +469,14 @@ def export_contours_without_colormatching(
             for i in range(4)
         ]
         piece = PuzzlePiece(edges)
-        # Pickup centre = mean of the 4 body corners (the quad centre). The area
-        # centroid (cv2.moments) is biased by the connectors — heads sticking out
-        # pull it outward, holes pull it inward — so it sits off the true body
-        # centre. The corner mean ignores tabs/holes and lands on the solid body,
-        # which is what the vacuum cup needs to grip accurately.
-        corner_pts = np.array([cnt[int(c)][0] for c in corners], dtype=float)
-        if len(corner_pts) == 4:
-            piece.img_centroid = (float(corner_pts[:, 0].mean()), float(corner_pts[:, 1].mean()))
-        else:
-            M = cv2.moments(cnt)
-            if M['m00'] != 0:
-                piece.img_centroid = (M['m10'] / M['m00'], M['m01'] / M['m00'])  # (col, row)
+        # Pickup centre = centre of mass (area centroid) of the filled silhouette.
+        # For a vacuum lift this is what we want: gripping at the mass centre keeps
+        # the piece balanced on the cup so it doesn't tip/shift as it's lifted.
+        # (The corner/quad centre tested worse — it's the geometric body centre, not
+        # the mass centre, so asymmetric tabs/holes make the piece tilt.)
+        M = cv2.moments(cnt)
+        if M['m00'] != 0:
+            piece.img_centroid = (M['m10'] / M['m00'], M['m01'] / M['m00'])  # (col, row)
         puzzle_pieces.append(piece)
 
         if export_img:
