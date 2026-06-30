@@ -46,6 +46,12 @@ CAL_M = [
     [-0.001105,  0.323029, 177.500],
 ]
 
+# Optional 2nd-order polynomial mapping (px → robot mm), fit by tools/calibrate_mapping.py
+# from a measured grid. Captures lens distortion the affine CAL_M cannot. When None the
+# affine CAL_M is used. Features per point: [1, x, y, x^2, x*y, y^2].
+#   CAL_POLY = [ [..6 robot_x coeffs..], [..6 robot_y coeffs..] ]
+CAL_POLY = None
+
 # Fine-tune knobs: scale positions outward from CAL_CENTRE after the affine transform.
 # 1.0 = no correction. Increase to push outward; decrease to pull inward.
 # Tune in steps of 0.005 (~0.5 mm per 100 mm from centre).
@@ -84,8 +90,13 @@ def pixel_to_robot(pixel_x, pixel_y, height_mm=0.0):
     factor H/(H-h). Pass the piece thickness to correct the pickup centre for
     this parallax. Default 0 = on the plane, no correction.
     """
-    rx = CAL_M[0][0] * pixel_x + CAL_M[0][1] * pixel_y + CAL_M[0][2]
-    ry = CAL_M[1][0] * pixel_x + CAL_M[1][1] * pixel_y + CAL_M[1][2]
+    if CAL_POLY is not None:
+        f = (1.0, pixel_x, pixel_y, pixel_x * pixel_x, pixel_x * pixel_y, pixel_y * pixel_y)
+        rx = sum(c * v for c, v in zip(CAL_POLY[0], f))
+        ry = sum(c * v for c, v in zip(CAL_POLY[1], f))
+    else:
+        rx = CAL_M[0][0] * pixel_x + CAL_M[0][1] * pixel_y + CAL_M[0][2]
+        ry = CAL_M[1][0] * pixel_x + CAL_M[1][1] * pixel_y + CAL_M[1][2]
     rx = CAL_CENTRE_X + (rx - CAL_CENTRE_X) * CAL_SCALE_X
     ry = CAL_CENTRE_Y + (ry - CAL_CENTRE_Y) * CAL_SCALE_Y
     if height_mm:
