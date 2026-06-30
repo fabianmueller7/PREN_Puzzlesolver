@@ -246,10 +246,11 @@ _GLOBAL = {'N': np.array([0.0, -1.0]), 'S': np.array([0.0, 1.0]),
            'E': np.array([1.0, 0.0]), 'W': np.array([-1.0, 0.0])}   # outward (x, y), y down
 
 
-def _apex_point(edge):
+def _apex_point(pts):
     """The connector apex (tab/hole centre) — point of max perpendicular deviation from
-    the chord; the natural mating point of a seam, valid for any edge length (T-junctions)."""
-    pts = np.asarray(edge.shape, dtype=float)
+    the chord; the natural mating point of a seam, valid for any edge length (T-junctions).
+    Accepts a points array (raw edge.shape, or an EDGE_OFFSET-shifted shape)."""
+    pts = np.asarray(pts, dtype=float)
     a, b = pts[0], pts[-1]
     ch = b - a
     L = np.linalg.norm(ch)
@@ -301,8 +302,12 @@ def _geometric_layout(pieces, cell, off):
             if j is None or j <= i:
                 continue
             k2 = next(kk for kk in range(4) if _dir_of(kk, off[j]) == _OPP[d])
-            cons.append((i, _apex_point(pieces[i].edges_[k]),
-                         j, _apex_point(pieces[j].edges_[k2])))
+            # Mate on the EDGE_OFFSET-shifted (outward) apexes, not the raw ones, so the
+            # layout abuses the manufacturing tolerance: aligning the offset edges leaves a
+            # ~2*EDGE_OFFSET gap between the real edges instead of shoving them together.
+            # With EDGE_OFFSET = 0 this is exactly the old raw-apex behaviour.
+            cons.append((i, _apex_point(_offset_shape_for(pieces[i].edges_[k], _centroid(pieces[i]))),
+                         j, _apex_point(_offset_shape_for(pieces[j].edges_[k2], _centroid(pieces[j])))))
 
     sol = {}
     for axis in (0, 1):
