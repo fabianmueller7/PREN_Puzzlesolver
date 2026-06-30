@@ -117,7 +117,7 @@ def pixel_to_robot(pixel_x, pixel_y, height_mm=0.0):
 # each size is tuned independently. grid_to_robot picks the matching profile.
 #   anchor_x/y = robot mm of the (gn=0, ge=0) cell; cell_w/h = pitch per grid step.
 PLACEMENT_PROFILES = {
-    4: {"anchor_x": 203, "anchor_y": 105, "cell_w": 90, "cell_h": 62},  # 2×2 — last known-good
+    4: {"anchor_x": 195, "anchor_y": 100, "cell_w": 90, "cell_h": 62},  # 2×2 — last known-good
     6: {"anchor_x": 220, "anchor_y": 100, "cell_w": 62, "cell_h": 62},  # 2×3 — verified 2026-06-29
 }
 # Used when a piece count has no dedicated profile above.
