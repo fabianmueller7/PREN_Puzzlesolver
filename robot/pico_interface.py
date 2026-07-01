@@ -202,6 +202,17 @@ class PicoInterface:
     def motors_disable(self):
         return self.call("motors_disable")
 
+    def vibe(self, delay_us=1000, duration_s=4.0):
+        """Vibrate the assembly (firmware toggles STEPPER2 back and forth).
+
+        The firmware 'vibrate' command loops `cycles` times; each cycle takes 4*delay_us
+        microseconds. We accept a wall-clock duration and convert:
+            cycles = duration_s * 1e6 / (4 * delay_us)
+        delay_us controls the pulse speed (smaller = faster/higher-pitched shake).
+        """
+        cycles = max(1, int(duration_s * 1_000_000 / (4 * delay_us)))
+        return self.call("vibrate", x=delay_us, y=cycles)
+
 
     # ------------------------
     # Cleanup
