@@ -21,6 +21,11 @@ ROTATION_SIGN = +1
 PICKUP_OFFSET_X =  1   # 1 mm to the right
 PICKUP_OFFSET_Y = -3   # 2 mm up
 
+# End-of-run settle: rapidly jog the head to vibrate the assembly so pieces resting on
+# top of each other drop into place. Set WIGGLE_CYCLES = 0 to disable.
+WIGGLE_AMP_MM = 4     # oscillation amplitude (robot mm)
+WIGGLE_CYCLES = 25    # number of back-and-forth cycles
+
 
 # Front-panel button GPIO pins (Pico). The firmware emits a single
 # {"type":"event","name":"button_press","pin":<n>} per short press (on release).
@@ -219,8 +224,29 @@ def move_pieces(robot, pieces: list, skip_home: bool = False):
         robot.vacuum_pump_off()
         robot.gripper_up()
 
+    _wiggle_settle(robot, pieces)
+
     robot.motors_disable()
     print("[3/3] Done")
+
+
+def _wiggle_settle(robot, pieces):
+    """Rapidly jog the head back and forth (diagonally) around the assembly centre so the
+    whole rig vibrates — pieces sitting on top of each other tend to drop into place."""
+    if WIGGLE_CYCLES <= 0:
+        return
+    ends = [p["end_center_robot_mm"] for p in pieces if p.get("grid_coord") is not None]
+    if not ends:
+        return
+    cx = round(sum(e[0] for e in ends) / len(ends))
+    cy = round(sum(e[1] for e in ends) / len(ends))
+    a = WIGGLE_AMP_MM
+    print(f"[3/3] Wiggle to settle: {WIGGLE_CYCLES} cycles around ({cx},{cy})")
+    robot.gripper_up()
+    for _ in range(WIGGLE_CYCLES):
+        robot.go_to(cx + a, cy + a)
+        robot.go_to(cx - a, cy - a)
+    robot.go_to(cx, cy)
 
 
 # ---------------------------------------------------------------------------
