@@ -29,7 +29,7 @@ ROT_HOME_DEG = 180
 # End-of-run settle: vibrate the assembly (firmware 'vibrate' on STEPPER2) so pieces
 # resting on top of each other drop into place.
 VIBE_DELAY_US = 1000    # pulse delay (us); smaller = faster/higher-pitched shake
-VIBE_DURATION_S = 4.0   # how long to vibrate (seconds)
+VIBE_DURATION_S = 10.0  # how long to vibrate (seconds)
 
 
 # Front-panel button GPIO pins (Pico). The firmware emits a single
