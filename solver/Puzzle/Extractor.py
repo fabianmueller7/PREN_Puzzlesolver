@@ -222,12 +222,26 @@ class Extractor:
         """
         print("[white_bg] attempting visual dark-piece detection...")
 
-        gray = cv2.cvtColor(self.img, cv2.COLOR_BGR2GRAY)
-        dark_pct = 100.0 * np.sum(gray < 80) / gray.size
-        print(f"[white_bg] dark pixel coverage (V<80): {dark_pct:.1f}%")
+        # Backlit gamefield: the background is BRIGHT and either the blue tint of the light
+        # panel or near-white/glare (low saturation). Pieces are dark — BUT glossy pieces
+        # reflect the LED as bright COLOURED (non-blue, saturated) highlights, which a plain
+        # brightness threshold (gray < 80) wrongly carves out of the silhouette. So classify
+        # background = bright AND (blue-hue OR unsaturated-white); everything else (dark body
+        # + coloured highlights) is piece. Robust to a white OR blue backlight.
+        hsv = cv2.cvtColor(self.img, cv2.COLOR_BGR2HSV)
+        H, S, V = hsv[:, :, 0], hsv[:, :, 1], hsv[:, :, 2]
+        BRIGHT_V = 120            # background brightness floor
+        BLUE_LO, BLUE_HI = 88, 122  # OpenCV hue range of the blue light panel
+        WHITE_S = 60             # saturation below this = white/grey glare (still background)
+        background = (V > BRIGHT_V) & (((H >= BLUE_LO) & (H <= BLUE_HI)) | (S < WHITE_S))
+        piece_mask = np.where(background, 0, 255).astype(np.uint8)
 
-        # Pieces are very dark/black against a bright background
-        _, piece_mask = cv2.threshold(gray, 80, 255, cv2.THRESH_BINARY_INV)
+        dark_pct = 100.0 * np.sum(piece_mask > 0) / piece_mask.size
+        print(f"[white_bg] piece coverage (bright-blue/white background removed): {dark_pct:.1f}%")
+
+        # Drop the coloured frame at the image border (non-blue → would read as piece).
+        m = 18
+        piece_mask[:m] = 0; piece_mask[-m:] = 0; piece_mask[:, :m] = 0; piece_mask[:, -m:] = 0
 
         # Remove small salt-and-pepper noise
         k_open = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
