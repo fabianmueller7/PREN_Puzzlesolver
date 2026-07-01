@@ -14,7 +14,7 @@ CAMERA_RESOLUTION = (1920, 1080)  # capture resolution
 # rotation_deg from the solver is CCW in screen coordinates (positive = CCW).
 # ROTATION_SIGN maps that to the robot's gripper_rotate direction. Determined empirically
 # on hardware (the sim's pixel_to_robot reflection does NOT reliably predict it).
-ROTATION_SIGN = +1
+ROTATION_SIGN = -1
 
 # Fine-tune pickup position offset (robot mm).
 # Positive X = right, positive Y = down (robot coordinate convention).

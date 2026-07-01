@@ -158,6 +158,35 @@ def grid_to_robot(ge, gn, grid_W, grid_H):
     ry = round(p["anchor_y"] - ge * p["cell_h"])
     return rx, ry
 
+
+# Extra rotation (deg) applied to every piece when the solver produced the grid PORTRAIT
+# (see landscape_place). It pairs with the 90° grid re-labeling so the whole assembly is one
+# rigid turn. If a normalised (portrait) run comes out mirrored/upside-down, use -90/270.
+PORTRAIT_ROTATE_DEG = 90.0
+
+
+def landscape_place(gn, ge, grid_H, grid_W):
+    """Robot mm + extra rotation that ALWAYS lands the assembly landscape (long axis along
+    robot X), regardless of whether the solver oriented the grid tall (gn long) or wide
+    (ge long). The solver labels the same 3x2 puzzle either way, non-deterministically; the
+    wide/portrait case otherwise placed a whole row off-frame and diagonal.
+
+    Returns (rx, ry, rot_extra_deg). When the grid is already tall (grid_H >= grid_W) this is
+    the plain grid_to_robot with rot_extra 0. When wide, the grid is rotated 90° (a rigid
+    turn: coords re-labeled AND rot_extra added) so positions and orientations stay consistent.
+    """
+    p = placement_profile(grid_W, grid_H)
+    if grid_H >= grid_W:
+        ix, iy, rot_extra = gn, ge, 0.0
+    else:
+        # portrait → rotate the grid 90° so the long axis (ge) drives X.
+        # (gn,ge) in a grid_H×grid_W layout → (ix=ge, iy=grid_H-1-gn); a rotation, not a
+        # transpose (the flip keeps it from mirroring the puzzle).
+        ix, iy, rot_extra = ge, (grid_H - 1 - gn), PORTRAIT_ROTATE_DEG
+    rx = round(p["anchor_x"] - ix * p["cell_w"])
+    ry = round(p["anchor_y"] - iy * p["cell_h"])
+    return rx, ry, rot_extra
+
 # A4 landscape at 150 DPI
 DEBUG_OUTPUT_W = 1782
 DEBUG_OUTPUT_H = 1260

@@ -207,6 +207,16 @@ class Puzzle:
             R = Vt.T @ np.diag([1.0, d]) @ U.T
             return _math.degrees(_math.atan2(R[1, 0], R[0, 0]))
 
+        # Landscape normalisation: the solver labels the 3x2 grid tall or wide
+        # non-deterministically. Compute the SAME extra rotation the position mapping uses so
+        # the whole assembly stays one rigid layout (see config.landscape_place).
+        end_place = {}
+        for p in self.pieces_:
+            if hasattr(p, "coord"):
+                gn, ge = p.coord
+                rx, ry, rot_extra = config.landscape_place(gn, ge, grid_H, grid_W)
+                end_place[id(p)] = (rx, ry, rot_extra)
+
         rotation_degs = []
         for p in self.pieces_:
             src_list, dst_list = [], []
@@ -229,6 +239,7 @@ class Puzzle:
                         gn, ge = p.coord
                         deg += config.COLUMN_ROTATION_CORRECTIONS.get(ge, 0.0)
                         deg += config.ROW_ROTATION_CORRECTIONS.get(gn, 0.0)
+                        deg += end_place[id(p)][2]        # landscape-normalisation turn
                     deg = ((deg + 180) % 360) - 180
                     rdeg = round(deg, 1)
             rotation_degs.append(rdeg)
@@ -239,9 +250,8 @@ class Puzzle:
             sc = start_centers[id(p)]
             ec = ec_list[i]
             robot_start = config.pixel_to_robot(sc[0], sc[1], height_mm=config.PIECE_THICKNESS_MM)
-            if hasattr(p, "coord"):
-                gn, ge = p.coord
-                robot_end = list(config.grid_to_robot(ge, gn, grid_W, grid_H))
+            if id(p) in end_place:
+                robot_end = list(end_place[id(p)][:2])
             else:
                 robot_end = list(robot_start)
             records.append({
