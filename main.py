@@ -12,16 +12,19 @@ ROBOT_PORT    = "/dev/ttyACM0"   # serial port of the Pico
 CAMERA_RESOLUTION = (1920, 1080)  # capture resolution
 
 # rotation_deg from the solver is CCW in screen coordinates (positive = CCW).
-# pixel_to_robot maps image→robot with a REFLECTION, so the robot's rotation is the mirror
-# of the screen rotation: ROTATION_SIGN = -1. With +1 the error was a mirror that scaled
-# with each piece's turn — pieces needing a big rotation landed diagonally ("sometimes right,
-# sometimes diagonal"). Verified in sim_placement against stick.png.
-ROTATION_SIGN = -1
+# ROTATION_SIGN maps that to the robot's gripper_rotate direction. Determined empirically
+# on hardware (the sim's pixel_to_robot reflection does NOT reliably predict it).
+ROTATION_SIGN = +1
 
 # Fine-tune pickup position offset (robot mm).
 # Positive X = right, positive Y = down (robot coordinate convention).
 PICKUP_OFFSET_X =  1   # 1 mm to the right
 PICKUP_OFFSET_Y = -3   # 2 mm up
+
+# Mechanical home angle of the gripper A axis (firmware home_position_mm). gripper_rotate is
+# absolute, so a piece is turned by `angle` via gripper_rotate(ROT_HOME_DEG + angle) after
+# the axis is homed (empty) at pickup. Must match the firmware's A home_position.
+ROT_HOME_DEG = 180
 
 # End-of-run settle: rapidly jog the head to vibrate the assembly so pieces resting on
 # top of each other drop into place. Set WIGGLE_CYCLES = 0 to disable.
@@ -207,17 +210,23 @@ def move_pieces(robot, pieces: list, skip_home: bool = False):
 
         print(f"  piece {idx}: ({x_s},{y_s}) → ({x_e},{y_e})  rotate {angle}°")
 
-        # Pick up (single descent)
+        # Home the rotation axis BEFORE gripping. The firmware's reset_rotation homes the A
+        # axis (to ROT_HOME_DEG), so it must run with an EMPTY gripper — homing while holding
+        # a piece spins it by an arbitrary amount and scrambles every placement (the cause of
+        # the intermittent diagonal). After this the gripper sits at the known home angle.
         robot.go_to(x_s + PICKUP_OFFSET_X, y_s + PICKUP_OFFSET_Y)
+        robot.reset_rotation()
+        sleep(0.2)
+
+        # Pick up (single descent)
         robot.gripper_down()
         robot.vacuum_pump_on()
         robot.gripper_on()
         robot.gripper_up()
 
-        # Rotate to target orientation while in the air
-        robot.reset_rotation()
-        sleep(0.2)
-        robot.gripper_rotate(angle)
+        # Rotate to target orientation while in the air. gripper_rotate is ABSOLUTE and home
+        # is at ROT_HOME_DEG, so command home + angle to turn the piece by exactly `angle`.
+        robot.gripper_rotate(ROT_HOME_DEG + angle)
 
         # Move to solved position and place
         robot.go_to(x_e, y_e)
