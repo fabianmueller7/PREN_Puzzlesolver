@@ -194,20 +194,21 @@ class Puzzle:
         grid_H = (max(c[0] for c in coords) + 1) if coords else 1
         grid_W = (max(c[1] for c in coords) + 1) if coords else 1
 
-        def _kabsch_angle_deg(src_pts, dst_pts):
+        def _kabsch_Rt(src_pts, dst_pts):
+            """Rigid transform (2x2 R, src mean, dst mean) mapping src -> dst (dst ~ R(src-sm)+dm)."""
             src = np.asarray(src_pts, dtype=float)
             dst = np.asarray(dst_pts, dtype=float)
             if len(src) < 2 or len(src) != len(dst):
                 return None
-            src_c = src - src.mean(axis=0)
-            dst_c = dst - dst.mean(axis=0)
-            H = src_c.T @ dst_c
+            sm, dm = src.mean(axis=0), dst.mean(axis=0)
+            H = (src - sm).T @ (dst - dm)
             U, S, Vt = np.linalg.svd(H)
             d = np.sign(np.linalg.det(Vt.T @ U.T))   # reflection guard
             R = Vt.T @ np.diag([1.0, d]) @ U.T
-            return _math.degrees(_math.atan2(R[1, 0], R[0, 0]))
+            return R, sm, dm
 
         rotation_degs = []
+        solved_pickups = []   # each piece's pickup point, in the SOLVED layout (image px)
         for p in self.pieces_:
             src_list, dst_list = [], []
             src_edges = start_edge_shapes.get(id(p), {})
@@ -221,17 +222,34 @@ class Puzzle:
                 src_list.append(np.asarray(src_e, dtype=float))
                 dst_list.append(dst_e)
             rdeg = 0.0
+            pickup_solved = None
             if src_list:
-                ang = _kabsch_angle_deg(np.concatenate(src_list), np.concatenate(dst_list))
-                if ang is not None:
-                    deg = ang + config.PUZZLE_TARGET_ROTATION_DEG
+                Rt = _kabsch_Rt(np.concatenate(src_list), np.concatenate(dst_list))
+                if Rt is not None:
+                    R, sm, dm = Rt
+                    deg = _math.degrees(_math.atan2(R[1, 0], R[0, 0])) + config.PUZZLE_TARGET_ROTATION_DEG
                     if hasattr(p, "coord"):
                         gn, ge = p.coord
                         deg += config.COLUMN_ROTATION_CORRECTIONS.get(ge, 0.0)
                         deg += config.ROW_ROTATION_CORRECTIONS.get(gn, 0.0)
                     deg = ((deg + 180) % 360) - 180
                     rdeg = round(deg, 1)
+                    # solved-layout position of the actual pickup point (what the robot grabs
+                    # and rotates about) = apply the piece's solve transform to its start centre.
+                    piv = start_centers[id(p)]
+                    if piv is not None and hasattr(p, "coord"):
+                        pickup_solved = tuple(R @ (np.asarray(piv, float) - sm) + dm)
             rotation_degs.append(rdeg)
+            solved_pickups.append(pickup_solved)
+
+        # End centres reproduce the solved tessellation: map each pickup point's solved position
+        # to robot mm and recentre the assembly on the target (centroid of the grid cells, so the
+        # tuned anchor/pose is preserved). See config.assembly_to_robot.
+        cells = [config.grid_to_robot(p.coord[1], p.coord[0], grid_W, grid_H)
+                 for p in self.pieces_ if hasattr(p, "coord")]
+        target = ((sum(c[0] for c in cells) / len(cells), sum(c[1] for c in cells) / len(cells))
+                  if cells else (config.A5_ANCHOR_X, config.A5_ANCHOR_Y))
+        robot_ends = config.assembly_to_robot(solved_pickups, target)
 
         ec_list = [self._piece_centroid(p) for p in self.pieces_]
         records = []
@@ -239,17 +257,19 @@ class Puzzle:
             sc = start_centers[id(p)]
             ec = ec_list[i]
             robot_start = config.pixel_to_robot(sc[0], sc[1], height_mm=config.PIECE_THICKNESS_MM)
-            if hasattr(p, "coord"):
-                gn, ge = p.coord
-                robot_end = list(config.grid_to_robot(ge, gn, grid_W, grid_H))
+            if robot_ends[i] is not None:
+                robot_end = list(robot_ends[i])
             else:
                 robot_end = list(robot_start)
+            spk = solved_pickups[i]
+            end_px = ([int(spk[0]), int(spk[1])] if spk is not None
+                      else ([int(ec[0]), int(ec[1])] if ec else None))
             records.append({
                 "piece_index": i,
                 "grid_coord": list(p.coord) if hasattr(p, "coord") else None,
                 "start_center_px": [int(sc[0]), int(sc[1])],
                 "start_center_robot_mm": list(robot_start),
-                "end_center_px": [int(ec[0]), int(ec[1])] if ec else None,
+                "end_center_px": end_px,
                 "end_center_robot_mm": robot_end,
                 "rotation_deg": rotation_degs[i],
             })

@@ -136,8 +136,10 @@ A5_CELL_W   = PLACEMENT_DEFAULT["cell_w"]
 A5_CELL_H   = PLACEMENT_DEFAULT["cell_h"]
 
 # Global rotation offset added to every piece's rotation_deg (degrees, CCW-positive).
-# 90 = each piece turned 90° (the opposite direction from 270; positions already correct).
-PUZZLE_TARGET_ROTATION_DEG = 90.0
+# 0 for the assembly_to_robot (solved-centroid) placement: positions already encode the
+# solved layout, so pieces only need their own solved orientation (kabsch). Paired with
+# main.ROTATION_SIGN = -1 (pixel_to_robot reflects image→robot, flipping the rotation).
+PUZZLE_TARGET_ROTATION_DEG = 0.0
 
 # Per-column (ge) rotation correction in degrees. Applied on top of PUZZLE_TARGET_ROTATION_DEG.
 # Use when a whole column lands consistently rotated by the same amount.
@@ -153,11 +155,34 @@ def grid_to_robot(ge, gn, grid_W, grid_H):
 
     Uses the placement profile auto-selected for this puzzle size (4 vs 6 pieces).
     X is driven by gn, Y by ge; horizontal pitch cell_w, vertical pitch cell_h.
+    Only used now to derive the assembly's TARGET CENTRE (see assembly_to_robot).
     """
     p = placement_profile(grid_W, grid_H)
     rx = round(p["anchor_x"] - gn * p["cell_w"])
     ry = round(p["anchor_y"] - ge * p["cell_h"])
     return rx, ry
+
+
+def assembly_to_robot(solved_pts_px, target_center):
+    """Place the solved assembly at *target_center* (robot mm).
+
+    Each solved reference point (the piece's pickup point in the SOLVED layout, image px)
+    is mapped through pixel_to_robot, then the whole set is translated so its centroid lands
+    on target_center. This reproduces the solver's exact tessellation — unlike grid_to_robot,
+    which snaps every centre onto a uniform cell grid and leaves ~5 mm seam gaps for
+    variable-size pieces. Pair with ROTATION_SIGN = -1 and PUZZLE_TARGET_ROTATION_DEG = 0.
+
+    solved_pts_px: list (piece order), entries may be None -> None in the output.
+    """
+    pts = [pixel_to_robot(c[0], c[1]) if c is not None else None for c in solved_pts_px]
+    valid = [p for p in pts if p is not None]
+    if not valid:
+        return pts
+    mx = sum(p[0] for p in valid) / len(valid)
+    my = sum(p[1] for p in valid) / len(valid)
+    cx, cy = target_center
+    return [None if p is None else (round(cx + (p[0] - mx)), round(cy + (p[1] - my)))
+            for p in pts]
 
 # A4 landscape at 150 DPI
 DEBUG_OUTPUT_W = 1782
