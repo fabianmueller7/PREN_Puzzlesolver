@@ -136,7 +136,7 @@ A5_CELL_W   = PLACEMENT_DEFAULT["cell_w"]
 A5_CELL_H   = PLACEMENT_DEFAULT["cell_h"]
 
 # Global rotation offset added to every piece's rotation_deg (degrees, CCW-positive).
-PUZZLE_TARGET_ROTATION_DEG = 90.0
+PUZZLE_TARGET_ROTATION_DEG = 270.0  # was 90; +180 turns every piece individually by 180°
 
 # Per-column (ge) rotation correction in degrees. Applied on top of PUZZLE_TARGET_ROTATION_DEG.
 # Use when a whole column lands consistently rotated by the same amount.
