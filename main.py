@@ -273,6 +273,67 @@ def _run_solve(robot, green_screen: bool = False, skip_home: bool = False):
     robot.led_off()
 
 
+def run_pickup_test(green_screen: bool = False):
+    """Pickup-accuracy check: place ONE piece, the robot detects it, picks it up, and HOLDS
+    it in the air so you can see how well the cup is centred on the piece. Ctrl+C releases it
+    back down and parks. No solving, no rotation — just capture → detect → pick → hold."""
+    import numpy as np
+    from robot.pico_interface import PicoInterface
+    from solver.Puzzle.Puzzle import Puzzle
+    from solver import config
+
+    _setup_debug_dir()
+    robot = PicoInterface(port=ROBOT_PORT)
+    try:
+        home_robot(robot)
+        image_path = take_picture(robot=robot)
+
+        puzzle = Puzzle(image_path, green_screen=green_screen)
+        pieces = puzzle.pieces_ or []
+        if not pieces:
+            print("[pickup-test] no piece detected — check the capture")
+            return
+
+        # If more than one blob was detected, use the one nearest the image centre.
+        import cv2
+        h, w = cv2.imread(image_path).shape[:2]
+        img_c = np.array([w / 2.0, h / 2.0])
+        def _c(p):
+            return np.array(p.img_centroid if p.img_centroid is not None
+                            else Puzzle._piece_centroid(p), dtype=float)
+        piece = min(pieces, key=lambda p: np.linalg.norm(_c(p) - img_c))
+        cx, cy = _c(piece)
+
+        sx, sy = config.pixel_to_robot(cx, cy, height_mm=config.PIECE_THICKNESS_MM)
+        tx, ty = sx + PICKUP_OFFSET_X, sy + PICKUP_OFFSET_Y
+        print(f"[pickup-test] piece centre: px=({cx:.1f},{cy:.1f})  "
+              f"robot=({sx},{sy})  target(+offset)=({tx},{ty})")
+
+        # Pick up (single descent) and hold in the air.
+        robot.go_to(tx, ty)
+        robot.gripper_down()
+        robot.vacuum_pump_on()
+        robot.gripper_on()
+        robot.gripper_up()
+        print("[pickup-test] Holding piece. Check cup vs piece centre. Ctrl+C to release.")
+        try:
+            while True:
+                sleep(0.5)
+        except KeyboardInterrupt:
+            print("\n[pickup-test] releasing")
+
+        # Put it back where it was picked and park.
+        robot.go_to(tx, ty)
+        robot.gripper_down()
+        robot.gripper_off()
+        robot.vacuum_pump_off()
+        robot.gripper_up()
+        robot.motors_disable()
+        robot.led_off()
+    finally:
+        robot.close()
+
+
 # ---------------------------------------------------------------------------
 # Status LED
 # ---------------------------------------------------------------------------
@@ -399,6 +460,8 @@ def main():
     mode.add_argument("--prod", action="store_true", help="production pipeline: capture → solve → move")
     mode.add_argument("--buttons", action="store_true",
                       help="wait for front-panel buttons (button 1 = home, button 2 = start pipeline)")
+    mode.add_argument("--pickup-test", action="store_true",
+                      help="place one piece; robot detects, picks it up and holds it (accuracy check)")
     parser.add_argument("--green-screen", action="store_true", help="enable green background removal")
     args = parser.parse_args()
 
@@ -413,6 +476,9 @@ def main():
 
     elif args.buttons:
         run_button_listener(green_screen=args.green_screen)
+
+    elif args.pickup_test:
+        run_pickup_test(green_screen=args.green_screen)
 
     else:  # --prod
         run_pipeline(green_screen=args.green_screen)
