@@ -141,6 +141,12 @@ A5_CELL_H   = PLACEMENT_DEFAULT["cell_h"]
 # main.ROTATION_SIGN = -1 (pixel_to_robot reflects image→robot, flipping the rotation).
 PUZZLE_TARGET_ROTATION_DEG = 0.0
 
+# Rigid rotation of the WHOLE assembly (degrees) — turns both the piece orientations AND
+# their positions together, so the tessellation is preserved but the finished puzzle sits
+# rotated in the target frame. 180 = assembly was coming out upside-down. (This is a rigid
+# turn, unlike PUZZLE_TARGET which would spin pieces without their positions and break it.)
+ASSEMBLY_ROTATION_DEG = 180.0
+
 # Per-column (ge) rotation correction in degrees. Applied on top of PUZZLE_TARGET_ROTATION_DEG.
 # Use when a whole column lands consistently rotated by the same amount.
 COLUMN_ROTATION_CORRECTIONS = {}
@@ -174,6 +180,7 @@ def assembly_to_robot(solved_pts_px, target_center):
 
     solved_pts_px: list (piece order), entries may be None -> None in the output.
     """
+    import math
     pts = [pixel_to_robot(c[0], c[1]) if c is not None else None for c in solved_pts_px]
     valid = [p for p in pts if p is not None]
     if not valid:
@@ -181,8 +188,16 @@ def assembly_to_robot(solved_pts_px, target_center):
     mx = sum(p[0] for p in valid) / len(valid)
     my = sum(p[1] for p in valid) / len(valid)
     cx, cy = target_center
-    return [None if p is None else (round(cx + (p[0] - mx)), round(cy + (p[1] - my)))
-            for p in pts]
+    th = math.radians(ASSEMBLY_ROTATION_DEG)          # rigid turn of the whole assembly
+    co, si = math.cos(th), math.sin(th)
+    out = []
+    for p in pts:
+        if p is None:
+            out.append(None)
+            continue
+        ox, oy = p[0] - mx, p[1] - my
+        out.append((round(cx + co * ox - si * oy), round(cy + si * ox + co * oy)))
+    return out
 
 # A4 landscape at 150 DPI
 DEBUG_OUTPUT_W = 1782

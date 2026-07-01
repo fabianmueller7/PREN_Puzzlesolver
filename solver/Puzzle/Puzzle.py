@@ -227,7 +227,9 @@ class Puzzle:
                 Rt = _kabsch_Rt(np.concatenate(src_list), np.concatenate(dst_list))
                 if Rt is not None:
                     R, sm, dm = Rt
-                    deg = _math.degrees(_math.atan2(R[1, 0], R[0, 0])) + config.PUZZLE_TARGET_ROTATION_DEG
+                    deg = (_math.degrees(_math.atan2(R[1, 0], R[0, 0]))
+                           + config.PUZZLE_TARGET_ROTATION_DEG
+                           + config.ASSEMBLY_ROTATION_DEG)   # rigid whole-assembly turn
                     if hasattr(p, "coord"):
                         gn, ge = p.coord
                         deg += config.COLUMN_ROTATION_CORRECTIONS.get(ge, 0.0)

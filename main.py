@@ -12,9 +12,10 @@ ROBOT_PORT    = "/dev/ttyACM0"   # serial port of the Pico
 CAMERA_RESOLUTION = (1920, 1080)  # capture resolution
 
 # rotation_deg from the solver is CCW in screen coordinates (positive = CCW).
-# Set ROTATION_SIGN = -1 if gripper_rotate(positive) means CW (most common).
-# Set ROTATION_SIGN = +1 if gripper_rotate(positive) means CCW.
-ROTATION_SIGN = +1
+# -1 pairs with the assembly_to_robot (solved-centroid) placement: pixel_to_robot reflects
+# image→robot, so a CCW image rotation is a CW robot rotation. (+1 only suited the old
+# uniform-grid placement.)
+ROTATION_SIGN = -1
 
 # Fine-tune pickup position offset (robot mm).
 # Positive X = right, positive Y = down (robot coordinate convention).
