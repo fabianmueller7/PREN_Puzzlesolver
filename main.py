@@ -189,6 +189,12 @@ def move_pieces(robot, pieces: list, skip_home: bool = False):
 
     for piece in pieces:
         idx     = piece["piece_index"]
+        # Skip pieces the solver couldn't place (grid_coord None → end == start).
+        # Otherwise the robot picks them up and drops them right back in the start
+        # area, which looks like a misplacement.
+        if piece.get("grid_coord") is None:
+            print(f"  piece {idx}: unsolved (no target) — leaving in place")
+            continue
         x_s, y_s = piece["start_center_robot_mm"]
         x_e, y_e = piece["end_center_robot_mm"]
         # rotation_deg is CCW in screen coords; apply ROTATION_SIGN to match robot convention.
