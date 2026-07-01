@@ -222,34 +222,29 @@ class Extractor:
         """
         print("[white_bg] attempting visual dark-piece detection...")
 
-        # Backlit gamefield: the background is BRIGHT and either the blue tint of the light
-        # panel or near-white/glare (low saturation). Pieces are dark — BUT glossy pieces
-        # reflect the LED as bright COLOURED (non-blue, saturated) highlights, which a plain
-        # brightness threshold (gray < 80) wrongly carves out of the silhouette. So classify
-        # background = bright AND (blue-hue OR unsaturated-white); everything else (dark body
-        # + coloured highlights) is piece. Robust to a white OR blue backlight.
-        hsv = cv2.cvtColor(self.img, cv2.COLOR_BGR2HSV)
-        H, S, V = hsv[:, :, 0], hsv[:, :, 1], hsv[:, :, 2]
-        BRIGHT_V = 120            # background brightness floor
-        BLUE_LO, BLUE_HI = 88, 122  # OpenCV hue range of the blue light panel
-        WHITE_S = 60             # saturation below this = white/grey glare (still background)
-        background = (V > BRIGHT_V) & (((H >= BLUE_LO) & (H <= BLUE_HI)) | (S < WHITE_S))
-        piece_mask = np.where(background, 0, 255).astype(np.uint8)
+        # Backlit gamefield: pieces are DARK, the background (white or blue light panel) is
+        # BRIGHT — the image is strongly bimodal in brightness. Use Otsu to pick the split
+        # AUTOMATICALLY from the histogram valley, so it adapts to the light level instead of
+        # a fixed threshold (which broke when the light was too bright — pieces read as
+        # background and shrank — or too dim). Robust to white/blue backlight and piece colour.
+        # Internal bright spots (specular highlights, the centre mounting hole) don't matter:
+        # drawContours(FILLED) fills each piece solid, so only the outer silhouette is used.
+        gray = cv2.cvtColor(self.img, cv2.COLOR_BGR2GRAY)
+        h, w = gray.shape
+        mrg = 30  # ignore the coloured frame at the image border so it can't bias Otsu
+        inner = gray[mrg:h - mrg, mrg:w - mrg]
+        thr, _ = cv2.threshold(inner, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+        piece_mask = np.zeros((h, w), np.uint8)
+        piece_mask[mrg:h - mrg, mrg:w - mrg] = (inner < thr).astype(np.uint8) * 255
+        print(f"[white_bg] Otsu threshold = {thr:.0f} (auto, light-adaptive)")
 
-        dark_pct = 100.0 * np.sum(piece_mask > 0) / piece_mask.size
-        print(f"[white_bg] piece coverage (bright-blue/white background removed): {dark_pct:.1f}%")
-
-        # Drop the coloured frame at the image border (non-blue → would read as piece).
-        m = 18
-        piece_mask[:m] = 0; piece_mask[-m:] = 0; piece_mask[:, :m] = 0; piece_mask[:, -m:] = 0
-
-        # Remove small salt-and-pepper noise
-        k_open = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
-        piece_mask = cv2.morphologyEx(piece_mask, cv2.MORPH_OPEN, k_open, iterations=1)
-
-        # Close small gaps inside pieces (tabs, text, texture)
-        k_close = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (15, 15))
-        piece_mask = cv2.morphologyEx(piece_mask, cv2.MORPH_CLOSE, k_close, iterations=2)
+        # Remove salt-and-pepper noise; light close smooths the outline. Kept small so it
+        # never bridges two nearby pieces into one blob (that's why FILLED, not a big close,
+        # handles internal holes).
+        piece_mask = cv2.morphologyEx(piece_mask, cv2.MORPH_OPEN,
+                                      cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5)))
+        piece_mask = cv2.morphologyEx(piece_mask, cv2.MORPH_CLOSE,
+                                      cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 9)))
 
         contours, _ = cv2.findContours(piece_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         if not contours:

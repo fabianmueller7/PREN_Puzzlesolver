@@ -21,6 +21,12 @@ ROTATION_SIGN = +1
 PICKUP_OFFSET_X =  1   # 1 mm to the right
 PICKUP_OFFSET_Y = -3   # 2 mm up
 
+# Pickup settle timing (seconds). With the cup pressed down, PICKUP_SEAT_S lets it flatten
+# the piece against the surface; PICKUP_GRIP_S lets the vacuum establish a full seal before
+# lifting. Prevents tilted/shifted grabs. Increase if pieces still come up crooked.
+PICKUP_SEAT_S = 0.3
+PICKUP_GRIP_S = 0.3
+
 # Mechanical home angle of the gripper A axis (firmware home_position_mm). gripper_rotate is
 # absolute, so a piece is turned by `angle` via gripper_rotate(ROT_HOME_DEG + angle) after
 # the axis is homed (empty) at pickup. Must match the firmware's A home_position.
@@ -218,10 +224,13 @@ def move_pieces(robot, pieces: list, skip_home: bool = False):
         robot.reset_rotation()
         sleep(0.2)
 
-        # Pick up (single descent)
+        # Pick up (single descent) — settle so the cup seats the piece flat and the vacuum
+        # seal establishes before lifting (avoids tilted/shifted grabs).
         robot.gripper_down()
+        sleep(PICKUP_SEAT_S)
         robot.vacuum_pump_on()
         robot.gripper_on()
+        sleep(PICKUP_GRIP_S)
         robot.gripper_up()
 
         # Rotate to target orientation while in the air. gripper_rotate is ABSOLUTE and home
@@ -309,11 +318,13 @@ def run_pickup_test(green_screen: bool = False):
         print(f"[pickup-test] piece centre: px=({cx:.1f},{cy:.1f})  "
               f"robot=({sx},{sy})  target(+offset)=({tx},{ty})")
 
-        # Pick up (single descent) and hold in the air.
+        # Pick up (single descent) with the same settle timing as production.
         robot.go_to(tx, ty)
         robot.gripper_down()
+        sleep(PICKUP_SEAT_S)
         robot.vacuum_pump_on()
         robot.gripper_on()
+        sleep(PICKUP_GRIP_S)
         robot.gripper_up()
         print("[pickup-test] Holding piece. Check cup vs piece centre. Ctrl+C to release.")
         try:
