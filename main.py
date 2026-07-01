@@ -12,9 +12,11 @@ ROBOT_PORT    = "/dev/ttyACM0"   # serial port of the Pico
 CAMERA_RESOLUTION = (1920, 1080)  # capture resolution
 
 # rotation_deg from the solver is CCW in screen coordinates (positive = CCW).
-# Set ROTATION_SIGN = -1 if gripper_rotate(positive) means CW (most common).
-# Set ROTATION_SIGN = +1 if gripper_rotate(positive) means CCW.
-ROTATION_SIGN = +1
+# pixel_to_robot maps image→robot with a REFLECTION, so the robot's rotation is the mirror
+# of the screen rotation: ROTATION_SIGN = -1. With +1 the error was a mirror that scaled
+# with each piece's turn — pieces needing a big rotation landed diagonally ("sometimes right,
+# sometimes diagonal"). Verified in sim_placement against stick.png.
+ROTATION_SIGN = -1
 
 # Fine-tune pickup position offset (robot mm).
 # Positive X = right, positive Y = down (robot coordinate convention).
