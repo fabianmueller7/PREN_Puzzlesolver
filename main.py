@@ -200,10 +200,8 @@ def move_pieces(robot, pieces: list, skip_home: bool = False):
 
         print(f"  piece {idx}: ({x_s},{y_s}) → ({x_e},{y_e})  rotate {angle}°")
 
-        # Pick up (double-tap: first tap seats the piece, second picks it up)
+        # Pick up (single descent)
         robot.go_to(x_s + PICKUP_OFFSET_X, y_s + PICKUP_OFFSET_Y)
-        robot.gripper_down()
-        robot.gripper_up()
         robot.gripper_down()
         robot.vacuum_pump_on()
         robot.gripper_on()
@@ -211,7 +209,7 @@ def move_pieces(robot, pieces: list, skip_home: bool = False):
 
         # Rotate to target orientation while in the air
         robot.reset_rotation()
-        sleep(1)
+        sleep(0.2)
         robot.gripper_rotate(angle)
 
         # Move to solved position and place
